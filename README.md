@@ -38,7 +38,6 @@ therefore often enforces defects in the output.
 - GMP (NOT included, must be installed on your system)
 - GUROBI (NOT included, must be installed on your system)
 - [MC3D](https://github.com/HendrikBrueckler/MC3D) (Included as submodule, together with all subdependencies)
-- [TrulySeamless3D](https://github.com/HendrikBrueckler/TrulySeamless3D) (Included as submodule, together with subdependency libHexEx)
 
 ### Building
 In root directory
