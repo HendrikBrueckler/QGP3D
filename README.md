@@ -1,6 +1,6 @@
 ![teaser](https://user-images.githubusercontent.com/38473042/167678103-ce292271-4962-4726-98c0-ea6cf376eb98.png)
 
-# QGP3D – Quantized Global Parametrization of Volumetric Parametrizations
+# QGP3D – Quantized Global Parametrization of Volumes
 
 `QGP3D` is an implementation of [Volume Parametrization Quantization for Hexahedral Meshing \[Brückler et al. 2022\]](http://graphics.cs.uos.de/papers/Volume_Parametrization_Quantization-SIGGRAPH2022.pdf) (SIGGRAPH 2022) distributed under GPLv3.
 
