@@ -1,10 +1,10 @@
-#include "quant3d/ConstraintWriter.hpp"
+#include "QGP3D/ConstraintWriter.hpp"
 
-#include "quant3d/ConstraintExtractor.hpp"
+#include "QGP3D/ConstraintExtractor.hpp"
 
 #include <iomanip>
 
-namespace mc3d
+namespace qgp3d
 {
 
 ConstraintWriter::ConstraintWriter(const TetMeshProps& meshProps, const std::string& fileName)
@@ -67,4 +67,4 @@ ConstraintWriter::RetCode ConstraintWriter::checkFile() const
     return SUCCESS;
 }
 
-} // namespace mc3d
+} // namespace qgp3d

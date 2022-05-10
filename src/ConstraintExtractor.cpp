@@ -1,11 +1,12 @@
-#include "quant3d/ConstraintExtractor.hpp"
+#include "QGP3D/ConstraintExtractor.hpp"
 
-#include "quant3d/MCQuantizer.hpp"
+#include "QGP3D/MCQuantizer.hpp"
 
 #include "OpenVolumeMesh/FileManager/FileManager.hh"
 
-namespace mc3d
+namespace qgp3d
 {
+
 ConstraintExtractor::ConstraintExtractor(const TetMeshProps& meshProps)
     : TetMeshNavigator(meshProps), MCMeshNavigator(meshProps)
 {
@@ -1290,4 +1291,4 @@ int ConstraintExtractor::getCycleCoord(const OVM::CellHandle& tetStart,
         transOrigCurr.chain(transitionAlongPath(connectingTets)).invert().rotate(toDir(uvwOrig1 - uvwOrig2)));
 }
 
-}; // namespace mc3d
+}; // namespace qgp3d

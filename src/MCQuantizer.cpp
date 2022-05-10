@@ -1,9 +1,9 @@
-#include "quant3d/MCQuantizer.hpp"
+#include "QGP3D/MCQuantizer.hpp"
 
 #include <gurobi_c++.h>
 #include <queue>
 
-namespace mc3d
+namespace qgp3d
 {
 
 bool MCQuantizer::GreaterPathLengthCompare::operator()(const WeaklyMonotonousPath& p1,
@@ -860,4 +860,4 @@ bool MCQuantizer::checkP0Containment(const WeaklyMonotonousPath& currentP) const
                        dimFullOverlap);
 }
 
-} // namespace mc3d
+} // namespace qgp3d

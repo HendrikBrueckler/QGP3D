@@ -1,10 +1,11 @@
-#ifndef Q3D_CONSTRAINTEXTRACTOR_HPP
-#define Q3D_CONSTRAINTEXTRACTOR_HPP
+#ifndef QGP3D_CONSTRAINTEXTRACTOR_HPP
+#define QGP3D_CONSTRAINTEXTRACTOR_HPP
 
 #include "MC3D/Mesh/MCMeshManipulator.hpp"
 
-namespace mc3d
+namespace qgp3d
 {
+using namespace mc3d;
 
 /**
  * @brief Class that manages the extraction of the MC based arc-tree of singular links and boundary regions
@@ -218,6 +219,6 @@ class ConstraintExtractor : public MCMeshNavigator
     vector<SingularNodeType> _singularNodeType; // tags for different types of singular nodes
 };
 
-} // namespace mc3d
+} // namespace qgp3d
 
 #endif

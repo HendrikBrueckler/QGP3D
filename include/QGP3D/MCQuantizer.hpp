@@ -1,10 +1,11 @@
-#ifndef Q3D_MCQUANTIZER_HPP
-#define Q3D_MCQUANTIZER_HPP
+#ifndef QGP3D_MCQUANTIZER_HPP
+#define QGP3D_MCQUANTIZER_HPP
 
 #include "MC3D/Mesh/MCMeshManipulator.hpp"
 
-namespace mc3d
+namespace qgp3d
 {
+using namespace mc3d;
 
 /**
  * @brief Class to manage the quantization of the MC and its arc lengths.
@@ -182,6 +183,6 @@ class MCQuantizer : public virtual MCMeshManipulator
     bboxOverlap(const Vec3i& min1, const Vec3i& max1, const Vec3i& min2, const Vec3i& max2, int& nDimFullOverlap);
 };
 
-} // namespace mc3d
+} // namespace qgp3d
 
 #endif

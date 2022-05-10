@@ -1,5 +1,5 @@
-#ifndef Q3D_CONSTRAINTWRITER_HPP
-#define Q3D_CONSTRAINTWRITER_HPP
+#ifndef QGP3D_CONSTRAINTWRITER_HPP
+#define QGP3D_CONSTRAINTWRITER_HPP
 
 #include "MC3D/Mesh/TetMeshNavigator.hpp"
 
@@ -7,8 +7,9 @@
 #include <map>
 #include <string>
 
-namespace mc3d
+namespace qgp3d
 {
+using namespace mc3d;
 
 class ConstraintWriter : public TetMeshNavigator
 {
@@ -50,6 +51,6 @@ class ConstraintWriter : public TetMeshNavigator
     RetCode checkFile() const;
 };
 
-} // namespace mc3d
+} // namespace qgp3d
 
 #endif

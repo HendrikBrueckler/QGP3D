@@ -9,15 +9,15 @@
 
 #include <CLI/CLI.hpp>
 
-#include <quant3d/MCQuantizer.hpp>
-#include <quant3d/ConstraintExtractor.hpp>
-#include <quant3d/ConstraintWriter.hpp>
+#include <QGP3D/MCQuantizer.hpp>
+#include <QGP3D/ConstraintExtractor.hpp>
+#include <QGP3D/ConstraintWriter.hpp>
 
 #include <iomanip>
 
 #include <string>
 
-using namespace mc3d;
+using namespace qgp3d;
 
 #define ASSERT_SUCCESS(stage, call)                                                                                    \
     do                                                                                                                 \
@@ -34,7 +34,7 @@ using namespace mc3d;
 int main(int argc, char** argv)
 {
     // Manage cli options
-    CLI::App app{"quant3d"};
+    CLI::App app{"QGP3D"};
     std::string inputFile = "";
     std::string wallsFile = "";
     bool simulateBC = false;
