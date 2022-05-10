@@ -1,4 +1,4 @@
-![teaser](https://user-images.githubusercontent.com/38473042/167607191-79ecfd18-2e50-4a88-a0f3-76cd31808d39.png)
+![teaser](https://user-images.githubusercontent.com/38473042/167678103-ce292271-4962-4726-98c0-ea6cf376eb98.png)
 
 # QGP3D – Quantized Global Parametrization of Volumetric Parametrizations
 
@@ -29,7 +29,7 @@ We guarantee that these spacings, when used as constraints in reparametrization,
 from which a hex mesh without defects can be extracted. Greedy rounding, the previous state-of-the-art approach for quantization, can not provide this guarantee and
 therefore often enforces defects in the output.
 
-![QGP3D](https://user-images.githubusercontent.com/38473042/167615196-3d012d93-f403-48cb-ae16-40e9b7a4fe45.png)
+![QGP3D](https://user-images.githubusercontent.com/38473042/167678775-2de020fd-1527-4e43-9350-fab9e6482ef2.png)
 
 
 ***
