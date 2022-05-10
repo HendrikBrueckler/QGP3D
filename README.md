@@ -1,8 +1,8 @@
 ![teaser](https://user-images.githubusercontent.com/38473042/167607191-79ecfd18-2e50-4a88-a0f3-76cd31808d39.png)
 
-# quant3d – A quantization method for volumetric parametrizations 
+# quant3d – Quantization of Volumetric Parametrizations
 
-`quant3d` is an implementation of [Volume Parametrization Quantization for Hexahedral Meshing \[Brückler et al. 2022\]](http://graphics.cs.uos.de/papers/Volume_Parametrization_Quantization-SIGGRAPH2022.pdf) (accepted to SIGGRAPH 2022) distributed under GPLv3.
+`quant3d` is an implementation of [Volume Parametrization Quantization for Hexahedral Meshing \[Brückler et al. 2022\]](http://graphics.cs.uos.de/papers/Volume_Parametrization_Quantization-SIGGRAPH2022.pdf) (SIGGRAPH 2022) distributed under GPLv3.
 
 If you make use of `quant3d` in your scientific work, please cite our paper. For your convenience,
 you can use the following bibtex snippet:
