@@ -1,0 +1,3 @@
+[submodule "extern/MC3D"]
+	path = extern/MC3D
+	url = git@github.com:HendrikBrueckler/MC3D.git
