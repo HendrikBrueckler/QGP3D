@@ -9,9 +9,11 @@
 
 #include <CLI/CLI.hpp>
 
-#include <QGP3D/MCQuantizer.hpp>
 #include <QGP3D/ConstraintExtractor.hpp>
 #include <QGP3D/ConstraintWriter.hpp>
+#include <QGP3D/MCQuantizer.hpp>
+
+#include <QGP3D/Quantizer.hpp>
 
 #include <iomanip>
 
@@ -44,7 +46,7 @@ int main(int argc, char** argv)
     bool exactOutput = false;
     bool forceSanitization = false;
 
-    double scaling = 1.0;
+    double scaling = 0.0;
     std::string constraintFile = "";
 
     app.add_option("--input", inputFile, "Specify the input mesh & seamless parametrization file.")->required();
@@ -75,7 +77,7 @@ int main(int argc, char** argv)
                    "Set this string to generate a quantization constraint file (optional)");
     app.add_option("--scaling",
                    scaling,
-                   "Set scaling factor for quantization (default 1.0)");
+                   "Set scaling factor for quantization");
 
     // Parse cli options
     try
@@ -97,6 +99,45 @@ int main(int argc, char** argv)
         ASSERT_SUCCESS("Reading precomputed MC walls", reader.readSeamlessParamWithWalls());
     else
         ASSERT_SUCCESS("Reading seamless map", reader.readSeamlessParam());
+
+    Quantizer q(meshRaw);
+    for (auto tet : meshRaw.cells())
+        for (auto v : meshRaw.tet_vertices(tet))
+            q.setParam(tet, v, Vec3Q2d(meshProps.ref<CHART>(tet).at(v)));
+
+    if (!constraintFile.empty())
+    {
+        vector<PathConstraint> constraints;
+        int nHexes = 0;
+        q.quantize(scaling, constraints, nHexes);
+
+        vector<ConstraintExtractor::TetPathConstraint> constraintPaths;
+        for (auto constraint : constraints)
+        {
+            constraintPaths.emplace_back();
+            constraintPaths.back().vFrom = constraint.vFrom;
+            constraintPaths.back().vTo = constraint.vTo;
+            for (auto hf : constraint.pathHalffaces)
+                constraintPaths.back().pathOrigTets.push_back(meshRaw.incident_cell(hf));
+            constraintPaths.back().pathOrigTets.push_back(constraint.tetTo);
+            constraintPaths.back().offset = constraint.offset;
+        }
+        std::ofstream _os(constraintFile);
+        auto& mcMeshProps = *meshProps.get<MC_MESH_PROPS>();
+
+        _os << nHexes << std::endl;
+        _os << constraintPaths.size() << std::endl;
+        for (auto& path : constraintPaths)
+        {
+            _os << path.vFrom << " " << path.vTo << std::endl;
+            _os << path.offset << std::endl;
+            _os << path.pathOrigTets.size() << " ";
+            for (auto it = path.pathOrigTets.begin(); it != path.pathOrigTets.end() - 1; it++)
+                _os << it->idx() << " ";
+            _os << path.pathOrigTets.back() << std::endl;
+        }
+        return 0;
+    }
 
     MCGenerator mcgen(meshProps);
     if (!inputHasMCwalls)
@@ -187,7 +228,7 @@ int main(int argc, char** argv)
     if (!constraintFile.empty())
     {
         ASSERT_SUCCESS("Quantization", MCQuantizer(meshProps).quantizeArcLengths(scaling, true, true));
-        ASSERT_SUCCESS("Writing constraints", ConstraintWriter(meshProps, constraintFile).writeConstraintPaths());
+        ASSERT_SUCCESS("Writing constraints", ConstraintWriter(meshProps, constraintFile).writeTetPathConstraints());
     }
 
     return 0;

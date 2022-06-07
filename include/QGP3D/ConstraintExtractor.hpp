@@ -1,7 +1,9 @@
 #ifndef QGP3D_CONSTRAINTEXTRACTOR_HPP
 #define QGP3D_CONSTRAINTEXTRACTOR_HPP
 
-#include "MC3D/Mesh/MCMeshManipulator.hpp"
+#include <MC3D/Mesh/MCMeshManipulator.hpp>
+
+#include "QGP3D/PathConstraint.hpp"
 
 namespace qgp3d
 {
@@ -13,18 +15,12 @@ using namespace mc3d;
 class ConstraintExtractor : public MCMeshNavigator
 {
   public:
-    /**
-     * @brief Path along which a fixed differential constraint (difference in param between start/end accumulated along
-     *        path) is set up.
-     */
-    struct ConstraintPath
+    struct TetPathConstraint
     {
-        OVM::VertexHandle vFrom;
-        OVM::VertexHandle vTo;
-
-        vector<OVM::CellHandle> pathOrigTets;
-
-        Vec3i displacement;
+        OVM::VertexHandle vFrom; // Path start vertex
+        OVM::VertexHandle vTo;   // Path end vertex
+        vector<OVM::CellHandle> pathOrigTets; // Halffaces traversed by path between start and end
+        Vec3i offset; // Integer offset between start and end in coordinate system of tetFrom
     };
 
     /**
@@ -50,9 +46,9 @@ class ConstraintExtractor : public MCMeshNavigator
      *        along the arc segment.
      *
      * @param paths IN: connected arc segments
-     * @return vector<ConstraintPath> constraints
+     * @return vector<PathConstraint> constraints
      */
-    vector<ConstraintPath> getConstraintPaths(const vector<vector<OVM::HalfEdgeHandle>>& paths);
+    vector<TetPathConstraint> getTetPathConstraints(const vector<vector<OVM::HalfEdgeHandle>>& paths);
 
     /**
      * @brief Get the cut surfaces, that cut the MC into a topological ball
@@ -155,7 +151,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param f2parent IN: face split hierarchy
      * @param tet2parent IN: tet split hierarchy
      */
-    void determineEquivalentEndpoints(ConstraintPath& path,
+    void determineEquivalentEndpoints(TetPathConstraint& path,
                                       list<OVM::CellHandle>& pathTets,
                                       const map<OVM::EdgeHandle, OVM::EdgeHandle>& e2parent,
                                       const map<OVM::FaceHandle, OVM::FaceHandle>& f2parent,

@@ -205,8 +205,8 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getSingularitySkeletonA
     return nodeTreePaths;
 }
 
-vector<ConstraintExtractor::ConstraintPath>
-ConstraintExtractor::getConstraintPaths(const vector<vector<OVM::HalfEdgeHandle>>& haSequences)
+vector<ConstraintExtractor::TetPathConstraint>
+ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHandle>>& haSequences)
 {
     assert(_meshPropsC.isAllocated<CHART_ORIG>());
     assert(_meshPropsC.isAllocated<TRANSITION_ORIG>());
@@ -214,7 +214,7 @@ ConstraintExtractor::getConstraintPaths(const vector<vector<OVM::HalfEdgeHandle>
 
     auto& mcMesh = _mcMeshPropsC.mesh;
     auto& tetMesh = _meshPropsC.mesh;
-    vector<ConstraintPath> constraintPaths;
+    vector<TetPathConstraint> tetPathConstraints;
 
     map<OVM::CellHandle, OVM::CellHandle> tet2parent;
     assert(_meshPropsC.isAllocated<CHILD_CELLS>());
@@ -241,8 +241,8 @@ ConstraintExtractor::getConstraintPaths(const vector<vector<OVM::HalfEdgeHandle>
     {
         list<OVM::HalfEdgeHandle> pathHas(haSequence.begin(), haSequence.end());
 
-        constraintPaths.emplace_back();
-        auto& path = constraintPaths.back();
+        tetPathConstraints.emplace_back();
+        auto& path = tetPathConstraints.back();
 
         auto pathHes = list<OVM::HalfEdgeHandle>();
         for (auto ha : pathHas)
@@ -301,7 +301,7 @@ ConstraintExtractor::getConstraintPaths(const vector<vector<OVM::HalfEdgeHandle>
         assert(!path.pathOrigTets.empty());
 
         vector<OVM::CellHandle> pathCheck;
-        path.displacement = Vec3i(0, 0, 0);
+        path.offset = Vec3i(0, 0, 0);
         Vec3i ignore(0, 0, 0);
         {
             // Walk on original path, but use coordinate system given by (possibly) shifted path
@@ -341,10 +341,10 @@ ConstraintExtractor::getConstraintPaths(const vector<vector<OVM::HalfEdgeHandle>
                     if (dim(dir) != 1)
                         throw std::logic_error("invalid arc dir");
 
-                    // DLOG(INFO) << "Path " << path.vFrom << "->" << path.vTo << ": accumulating displacement "
+                    // DLOG(INFO) << "Path " << path.vFrom << "->" << path.vTo << ": accumulating offset "
                     //            << Vec3d(toVec(dir)) * _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha))
                     //            << " of ha " << ha;
-                    path.displacement += toVec(dir) * _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
+                    path.offset += toVec(dir) * _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
                 }
 
                 // Go along pathHes until vTo is reached;
@@ -385,16 +385,16 @@ ConstraintExtractor::getConstraintPaths(const vector<vector<OVM::HalfEdgeHandle>
                 // }
             }
             // This assertion does not hold true, because we might have appended connector tets.
-            // However, they are irrelevant for displacement as all path arc directions have already been determined.
+            // However, they are irrelevant for offset as all path arc directions have already been determined.
             // assert(*itTet == pathTets.back());
             assert(itHe == pathHes.end());
         }
         for (int i = 0; i < 3; i++)
             if (ignore[i] == 1)
-                path.displacement[i] = INT_MAX;
+                path.offset[i] = INT_MAX;
     }
 
-    return constraintPaths;
+    return tetPathConstraints;
 }
 
 list<OVM::CellHandle> ConstraintExtractor::connectingTetPath(const OVM::CellHandle& tetStart,
@@ -1090,7 +1090,7 @@ list<OVM::HalfEdgeHandle> ConstraintExtractor::pathThroughBlock(const OVM::Verte
 }
 
 void
-ConstraintExtractor::determineEquivalentEndpoints(ConstraintPath& path,
+ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
                                                   list<OVM::CellHandle>& pathTets,
                                                   const map<OVM::EdgeHandle, OVM::EdgeHandle>& e2parent,
                                                   const map<OVM::FaceHandle, OVM::FaceHandle>& f2parent,

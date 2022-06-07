@@ -1,7 +1,7 @@
 #ifndef QGP3D_MCQUANTIZER_HPP
 #define QGP3D_MCQUANTIZER_HPP
 
-#include "MC3D/Mesh/MCMeshManipulator.hpp"
+#include <MC3D/Mesh/MCMeshManipulator.hpp>
 
 namespace qgp3d
 {

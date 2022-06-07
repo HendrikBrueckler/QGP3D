@@ -1,7 +1,7 @@
 #ifndef QGP3D_CONSTRAINTWRITER_HPP
 #define QGP3D_CONSTRAINTWRITER_HPP
 
-#include "MC3D/Mesh/TetMeshNavigator.hpp"
+#include <MC3D/Mesh/TetMeshNavigator.hpp>
 
 #include <fstream>
 #include <map>
@@ -34,7 +34,7 @@ class ConstraintWriter : public TetMeshNavigator
      *
      * @return RetCode
      */
-    RetCode writeConstraintPaths();
+    RetCode writeTetPathConstraints();
 
   private:
     const std::string _fileName;

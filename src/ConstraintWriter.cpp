@@ -12,7 +12,7 @@ ConstraintWriter::ConstraintWriter(const TetMeshProps& meshProps, const std::str
 {
 }
 
-ConstraintWriter::RetCode ConstraintWriter::writeConstraintPaths()
+ConstraintWriter::RetCode ConstraintWriter::writeTetPathConstraints()
 {
     _os = std::ofstream(_fileName);
     auto ret = checkFile();
@@ -21,9 +21,9 @@ ConstraintWriter::RetCode ConstraintWriter::writeConstraintPaths()
     ConstraintExtractor extr(_meshPropsC);
 
     auto haSequences = extr.getSingularitySkeletonArcs();
-    auto constraintPaths = extr.getConstraintPaths(haSequences);
+    auto tetPathConstraints = extr.getTetPathConstraints(haSequences);
 
-    LOG(INFO) << "Writing " << constraintPaths.size() << " constraints to file " << _fileName;
+    LOG(INFO) << "Writing " << tetPathConstraints.size() << " constraints to file " << _fileName;
 
     auto& mcMeshProps = *_meshPropsC.get<MC_MESH_PROPS>();
 
@@ -43,11 +43,11 @@ ConstraintWriter::RetCode ConstraintWriter::writeConstraintPaths()
     }
 
     _os << nHexes << std::endl;
-    _os << constraintPaths.size() << std::endl;
-    for (auto& path : constraintPaths)
+    _os << tetPathConstraints.size() << std::endl;
+    for (auto& path : tetPathConstraints)
     {
-        _os << path.vFrom << " " << path.vFrom << " 0.0 " << path.vTo << " " << path.vTo << " 0.0" << std::endl;
-        _os << path.displacement << std::endl;
+        _os << path.vFrom << " " << path.vTo << std::endl;
+        _os << path.offset << std::endl;
         _os << path.pathOrigTets.size() << " ";
         for (auto it = path.pathOrigTets.begin(); it != path.pathOrigTets.end() - 1; it++)
             _os << it->idx() << " ";

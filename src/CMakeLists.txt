@@ -6,6 +6,7 @@ list(APPEND ${QGP3D_LIB_NAME}_SOURCE_LIST
      "MCQuantizer.cpp"
      "ConstraintExtractor.cpp"
      "ConstraintWriter.cpp"
+     "Quantizer.cpp"
      )
 add_library(${QGP3D_LIB_NAME} STATIC ${${QGP3D_LIB_NAME}_SOURCE_LIST})
 

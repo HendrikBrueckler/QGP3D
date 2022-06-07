@@ -59,4 +59,35 @@ For full information on its usage, execute
 Example input can be found in folder ```extern/MC3D/tests/resources```.
 
 ### API
-For details on the API of the library, check the headers in ```include```, they are thoroughly documented. Apart from that, ```cli/main.cpp``` demonstrates usage of the entire pipeline for both simple and advanced usage.
+A simple interface is provided in ```QGP3D/Quantizer.hpp```.
+It can be used like this:
+
+```cpp
+// Generation of tet mesh and seamless parametrization
+// ...
+
+// tetMesh: your mc3d::TetMesh
+qgp3d::Quantizer quantizer(tetMesh);
+
+// param: your property defining mc3d::Vec3d parameter values for each tet-vertex-pair
+for (auto tet: tetMesh.cells())
+    for (auto v: tetMesh.cell_vertices(tet))
+        quantizer.setParam(tet, v, param[tet][v]);
+
+// This scaling factor is applied to the parametrization before quantization
+double scaling = 1.0;
+// This will contain integer spacing constraints that will enforce a valid quantization
+std::vector<qgp3d::PathConstraint> constraints;
+// This will hold the number of hexahedra implied by the quantization
+int nHexahedra = 0;
+
+// Compute a quantization and retrieve the corresponding spacing constraints
+quantizer.quantize(scaling, constraints, nHexahedra);
+
+// Generate a quantized seamless parametrization (integer-grid map)
+// by enforcing the retreived integer spacing constraints during reparametrization
+// ...
+
+```
+
+For more details on the API of the library, check the headers in ```include```, they are thoroughly documented. Apart from that, ```cli/main.cpp``` demonstrates usage of the entire pipeline for both simple and advanced usage.
