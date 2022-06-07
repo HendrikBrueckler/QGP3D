@@ -44,7 +44,7 @@ int main(int argc, char** argv)
     bool exactOutput = false;
     bool forceSanitization = false;
 
-    double scaling = 0.0;
+    double scaling = 1.0;
     std::string constraintFile = "";
 
     app.add_option("--input", inputFile, "Specify the input mesh & seamless parametrization file.")->required();
@@ -73,6 +73,9 @@ int main(int argc, char** argv)
     app.add_option("--output-constraint-file",
                    constraintFile,
                    "Set this string to generate a quantization constraint file (optional)");
+    app.add_option("--scaling",
+                   scaling,
+                   "Set scaling factor for quantization (default 1.0)");
 
     // Parse cli options
     try

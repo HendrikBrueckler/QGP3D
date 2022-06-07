@@ -1,4 +1,4 @@
-set(CLI_NAME "QGP3D_cli")
+set(CLI_NAME "qgp3d_cli")
 
 if (NOT TARGET CLI11::CLI11)
     add_subdirectory(${PROJECT_SOURCE_DIR}/extern/MC3D/extern/CLI11 extern/CLI11 EXCLUDE_FROM_ALL)
