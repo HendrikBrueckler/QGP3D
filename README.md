@@ -54,7 +54,7 @@ It outputs the integer spacing constraints between critical vertices of the inpu
 After building the CLI app can be found in ```build/Build/bin/cli``` .
 For full information on its usage, execute
 
-    QGP3D_cli --help
+    qgp3d_cli --help
 
 Example input can be found in folder ```extern/MC3D/tests/resources```.
 
