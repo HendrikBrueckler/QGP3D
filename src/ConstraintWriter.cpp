@@ -20,7 +20,7 @@ ConstraintWriter::RetCode ConstraintWriter::writeTetPathConstraints()
         return ret;
     ConstraintExtractor extr(_meshPropsC);
 
-    auto haSequences = extr.getSingularitySkeletonArcs();
+    auto haSequences = extr.getCriticalSkeletonArcs();
     auto tetPathConstraints = extr.getTetPathConstraints(haSequences);
 
     LOG(INFO) << "Writing " << tetPathConstraints.size() << " constraints to file " << _fileName;

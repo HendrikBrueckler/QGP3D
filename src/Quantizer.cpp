@@ -21,6 +21,27 @@ void Quantizer::setParam(const OVM::CellHandle& tet, const OVM::VertexHandle& co
     _meshProps.ref<CHART>(tet)[corner] = Vec3Q(uvw);
 }
 
+void Quantizer::setFeature(const OVM::FaceHandle& f, bool isFeature)
+{
+    if (!_meshProps.isAllocated<IS_FEATURE_F>())
+        _meshProps.allocate<IS_FEATURE_F>(false);
+    _meshProps.set<IS_FEATURE_F>(f, isFeature);
+}
+
+void Quantizer::setFeature(const OVM::EdgeHandle& e, bool isFeature)
+{
+    if (!_meshProps.isAllocated<IS_FEATURE_E>())
+        _meshProps.allocate<IS_FEATURE_E>(false);
+    _meshProps.set<IS_FEATURE_E>(e, isFeature);
+}
+
+void Quantizer::setFeature(const OVM::VertexHandle& v, bool isFeature)
+{
+    if (!_meshProps.isAllocated<IS_FEATURE_V>())
+        _meshProps.allocate<IS_FEATURE_V>(false);
+    _meshProps.set<IS_FEATURE_V>(v, isFeature);
+}
+
 Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes)
 {
     MCGenerator mcGen(_meshProps);
@@ -93,7 +114,7 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
 
     ConstraintExtractor extr(_meshProps);
 
-    auto haSequences = extr.getSingularitySkeletonArcs();
+    auto haSequences = extr.getCriticalSkeletonArcs();
     auto tetPathConstraints = extr.getTetPathConstraints(haSequences);
 
     constraints.clear();

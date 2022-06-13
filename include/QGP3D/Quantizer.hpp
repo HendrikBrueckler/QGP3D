@@ -45,6 +45,30 @@ class Quantizer
     void setParam(const OVM::CellHandle& tet, const OVM::VertexHandle& corner, const Vec3d& uvw);
 
     /**
+     * @brief Mark feature faces (no feature is default).
+     *
+     * @param f IN: face
+     * @param isFeature IN: whether \p f is a feature
+     */
+    void setFeature(const OVM::FaceHandle& f, bool isFeature);
+
+    /**
+     * @brief Mark feature edges (no feature is default).
+     *
+     * @param e IN: edge
+     * @param isFeature IN: whether \p e is a feature
+     */
+    void setFeature(const OVM::EdgeHandle& e, bool isFeature);
+
+    /**
+     * @brief Mark feature vertices (no feature is default).
+     *
+     * @param v IN: vertex
+     * @param isFeature IN: whether \p v is a feature
+     */
+    void setFeature(const OVM::VertexHandle& v, bool isFeature);
+
+    /**
      * @brief Generate constraints for the quantization of the input seamless parametrization.
      *
      * @param scaleFactor IN: factor by which to scale the input seamless parametrization

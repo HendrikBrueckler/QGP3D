@@ -38,7 +38,7 @@ class ConstraintExtractor : public MCMeshNavigator
      *
      * @return vector<vector<OVM::HalfEdgeHandle>> singularity arc skeleton segments
      */
-    vector<vector<OVM::HalfEdgeHandle>> getSingularitySkeletonArcs();
+    vector<vector<OVM::HalfEdgeHandle>> getCriticalSkeletonArcs();
 
     /**
      * @brief From a set of connected arc segments together with an underlying quantization, generate
@@ -59,6 +59,12 @@ class ConstraintExtractor : public MCMeshNavigator
     void getCutSurfaces(vector<vector<OVM::FaceHandle>>& cutSurfaces, vector<int>& p2cutSurface);
 
   protected:
+    /**
+     * @brief Determine which nodes are critical and which are pseudocritical (inserted on critical elements
+     *        that have no actual critical node)
+     */
+    void assignNodeTypes();
+
     /**
      * @brief Mark patches of the cut graph (cutting mesh to topological ball)
      */
@@ -197,7 +203,7 @@ class ConstraintExtractor : public MCMeshNavigator
     /**
      * @brief Types of nodes marked as "singular"
      */
-    enum SingularNodeType
+    enum ConstraintNodeType
     {
         NONE,
         NATIVE,
@@ -212,7 +218,8 @@ class ConstraintExtractor : public MCMeshNavigator
     vector<bool> _isCutPatch; // whether a given patch is part of the cut surface
     vector<int> _cutSurfaceID; // which manifold cut surface patch a given patch is part of
     vector<vector<OVM::FaceHandle>> _cutSurfaces; // manifold collections of cut surface patches
-    vector<SingularNodeType> _singularNodeType; // tags for different types of singular nodes
+    vector<ConstraintNodeType> _constraintNodeType; // tags for different types of constraint tree nodes
+    vector<bool> _arcIsCritical; // tags for critical arcs
 };
 
 } // namespace qgp3d

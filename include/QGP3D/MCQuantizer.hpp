@@ -52,9 +52,8 @@ class MCQuantizer : public virtual MCMeshManipulator
      */
     struct WeaklyMonotonousPath
     {
-        OVM::VertexHandle n; // Current node
-        int singPathIdx1;    // Index of source singular link
-        UVWDir dirs1;        // Direction of extension of source
+        OVM::VertexHandle n;  // Current node
+        UVWDir dirs1;         // Direction of extension of source
 
         map<UVWDir, vector<OVM::EdgeHandle>> dir2walkedArcs;
         vector<OVM::HalfEdgeHandle> path;
@@ -63,7 +62,7 @@ class MCQuantizer : public virtual MCMeshManipulator
         UVWDir monotonousDirs;
         UVWDir walkedDirs; // Opposite dirs of these are never in monotonousDirs
 
-        bool branchedOff; // Whether the path has left the starting singular link
+        bool branchedOff; // Whether the path has left the starting critical link
 
         Vec3i deltaMin;
         Vec3i deltaMax;
@@ -87,31 +86,36 @@ class MCQuantizer : public virtual MCMeshManipulator
     };
 
     /**
-     * @brief This will find 0-length paths connecting any singularlink-singularlink or singularlink-boundary pairs
+     * @brief This will find 0-length paths connecting any criticallink-criticallink or criticallink-boundary pairs
      *        and store the MC arcs with associated +/- sign info into \p nonZeroSumArcs . The sum of these (including
      *        sign) may not be 0. This way, separation can be enforced. It is not guaranteed, that this method will find
      *        all violations. You have to iteratively call it and optimize using GUROBI until \p nonZeroSumArcs is
      *        returned empty.
      *
-     * @param singularLinks IN: a collection of singular links that can be precomputed
+     * @param criticalLinks IN: a collection of critical links that can be precomputed
      * @param nonZeroSumArcs OUT: MC arcs with associated +/- sign info into \p nonZeroSumArcs . The sum of these arcs'
      *                            lengths (including sign) may not be 0.
      * @return RetCode SUCCESS or error code
      */
-    RetCode findSeparationViolatingPaths(const vector<SingularLink>& singularLinks,
+    RetCode findSeparationViolatingPaths(const vector<CriticalLink>& criticalLinks,
+                                         const vector<bool>& arcIsCritical,
+                                         const vector<bool>& nodeIsCritical,
+                                         const vector<bool>& patchIsCritical,
                                          vector<vector<std::pair<int, OVM::EdgeHandle>>>& nonZeroSumArcs) const;
 
   protected:
-
     /**
      * @brief Given an initialization \p pStart , trace all possible paths monotonous in at least
      *        one coordinate until a separation violation is encountered and registered in \p nonZeroSumArcs
      *
-     * @param singPath1 IN: singular link to use as start for MC graph search
+     * @param criticalPath1 IN: critical link to use as start for MC graph search
      * @param nonZeroSumArcs IN/OUT: new separation violation is registered here
      * @return RetCode SUCCESS or error code
      */
-    RetCode traceExhaustPaths(const SingularLink& singPath1,
+    RetCode traceExhaustPaths(const CriticalLink& criticalPath1,
+                              const vector<bool>& arcIsCritical,
+                              const vector<bool>& nodeIsCritical,
+                              const vector<bool>& patchIsCritical,
                               vector<vector<std::pair<int, OVM::EdgeHandle>>>& nonZeroSumArcs) const;
 
     /**

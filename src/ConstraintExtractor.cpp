@@ -12,73 +12,11 @@ ConstraintExtractor::ConstraintExtractor(const TetMeshProps& meshProps)
 {
 }
 
-vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getSingularitySkeletonArcs()
+vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs()
 {
     auto& mcMesh = _mcMeshPropsC.mesh;
 
-    vector<MCQuantizer::SingularLink> singularLinks;
-    map<OVM::EdgeHandle, int> aSing2singularLinkIdx;
-    map<OVM::VertexHandle, vector<int>> n2singularLinksOut;
-    map<OVM::VertexHandle, vector<int>> n2singularLinksIn;
-    getSingularLinks(singularLinks, aSing2singularLinkIdx, n2singularLinksOut, n2singularLinksIn);
-
-    int nCircular = 0;
-    for (auto path : singularLinks)
-        if (path.cyclic)
-            nCircular++;
-    LOG(INFO) << nCircular << " cyclic links out of " << singularLinks.size();
-
-    // Mark singular nodes (including those inserted into circular arcs)
-    _singularNodeType = vector<SingularNodeType>(mcMesh.n_vertices(), NONE);
-    for (auto* coll : {&n2singularLinksIn, &n2singularLinksOut})
-        for (auto& kv : *coll)
-        {
-            if (nodeType(kv.first) == NodeType::SINGULAR)
-                _singularNodeType[kv.first.idx()] = NATIVE;
-            else
-                _singularNodeType[kv.first.idx()] = ARTIFICIAL_ON_LINK;
-        }
-
-    vector<BoundaryRegion> boundaryRegions;
-    map<OVM::HalfFaceHandle, int> hp2boundaryID;
-    getBoundaryRegions(boundaryRegions, hp2boundaryID);
-
-    int nBorderless = 0;
-    for (auto& region : boundaryRegions)
-        if (region.boundaryHas.empty())
-            nBorderless++;
-    LOG(INFO) << nBorderless << " borderless boundary regions out of " << boundaryRegions.size();
-
-    // Check for boundary regions with no singular nodes or singular arcs in them
-    for (auto& region : boundaryRegions)
-    {
-        bool hasSingularity = false;
-        for (auto n : region.patchNs)
-            if (nodeType(n) != NodeType::REGULAR)
-            {
-                hasSingularity = true;
-                break;
-            }
-        if (hasSingularity)
-            continue;
-        assert(!region.patchNs.empty());
-        _singularNodeType[region.patchNs.begin()->idx()] = ARTIFICIAL_ON_BOUNDARY;
-    }
-
-    int nNative = 0;
-    int nArtificialOnLink = 0;
-    int nArtificialOnBoundary = 0;
-    for (auto n : mcMesh.vertices())
-        if (_singularNodeType[n.idx()] == NATIVE)
-            nNative++;
-        else if (_singularNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
-            nArtificialOnBoundary++;
-        else if (_singularNodeType[n.idx()] == ARTIFICIAL_ON_LINK)
-            nArtificialOnLink++;
-
-    LOG(INFO) << nNative << " native singular nodes, " << nArtificialOnLink
-              << " singular nodes inserted on cyclic singular links, " << nArtificialOnBoundary
-              << " singular nodes inserted on borderless boundary region";
+    assignNodeTypes();
 
     // Mark cut patches.
     markCutPatches();
@@ -116,7 +54,7 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getSingularitySkeletonA
     for (auto a : mcMesh.edges())
         for (auto n : mcMesh.edge_vertices(a))
         {
-            if (countIncidentSkeletonArcs(n) == 1 && _singularNodeType[n.idx()] == NONE)
+            if (countIncidentSkeletonArcs(n) == 1 && _constraintNodeType[n.idx()] == NONE)
             {
                 _isSkeletonArc[a.idx()] = false;
                 aQ.push_back(a);
@@ -130,7 +68,7 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getSingularitySkeletonA
         auto a = aQ.front();
         aQ.pop_front();
         for (auto n : mcMesh.edge_vertices(a))
-            if (countIncidentSkeletonArcs(n) == 1 && _singularNodeType[n.idx()] == NONE)
+            if (countIncidentSkeletonArcs(n) == 1 && _constraintNodeType[n.idx()] == NONE)
                 for (auto aNext : mcMesh.vertex_edges(n))
                     if (_isSkeletonArc[aNext.idx()])
                     {
@@ -147,7 +85,7 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getSingularitySkeletonA
         {
             if (countIncidentSkeletonArcs(n) != 1)
                 continue;
-            if (_singularNodeType[n.idx()] == NONE)
+            if (_constraintNodeType[n.idx()] == NONE)
                 throw std::logic_error("Invalid MSP leaf");
             leaf = n;
             break;
@@ -167,12 +105,12 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getSingularitySkeletonA
                 nQ.pop_front();
                 pathQ.pop_front();
 
-                if (_singularNodeType[n.idx()] != NONE && n != leaf)
+                if (_constraintNodeType[n.idx()] != NONE && n != leaf)
                 {
                     nodeTreePaths.emplace_back(path);
                     // Only reset the path if node is natively singular, if it is only artificial we do not constrain
                     // its position in all coordinates, so we can not cut the incoming and outgoing paths in two
-                    if (_singularNodeType[n.idx()] == NATIVE)
+                    if (_constraintNodeType[n.idx()] == NATIVE)
                         path = {};
                 }
 
@@ -193,8 +131,7 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getSingularitySkeletonA
         }
     }
 
-    LOG(INFO) << nodeTreePaths.size() << " paths in spanning tree of "
-              << nNative + nArtificialOnBoundary + nArtificialOnLink << " nodes";
+    LOG(INFO) << nodeTreePaths.size() << " paths in spanning tree of critical nodes";
 
     // Get cycles constraining cut graph
     vector<vector<OVM::HalfEdgeHandle>> cycles = getCutSurfaceCycles();
@@ -254,8 +191,8 @@ ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHand
         auto nStart = mcMesh.from_vertex_handle(haSequence.front());
         auto nEnd = mcMesh.to_vertex_handle(haSequence.back());
 
-        SingularNodeType startNodeType = _singularNodeType[nStart.idx()];
-        SingularNodeType endNodeType = _singularNodeType[nEnd.idx()];
+        ConstraintNodeType startNodeType = _constraintNodeType[nStart.idx()];
+        ConstraintNodeType endNodeType = _constraintNodeType[nEnd.idx()];
 
         assert(startNodeType != NONE && endNodeType != NONE);
 
@@ -551,51 +488,95 @@ int ConstraintExtractor::countIncidentSkeletonArcs(const OVM::VertexHandle& n) c
     return count;
 }
 
-
 void ConstraintExtractor::getCutSurfaces(vector<vector<OVM::FaceHandle>>& cutSurfaces, vector<int>& p2cutSurface)
+{
+    assignNodeTypes();
+
+    markCutPatches();
+    cutSurfaces = _cutSurfaces;
+    p2cutSurface = _cutSurfaceID;
+}
+
+void ConstraintExtractor::assignNodeTypes()
 {
     auto& mcMesh = _mcMeshPropsC.mesh;
 
-    vector<MCQuantizer::SingularLink> singularLinks;
-    map<OVM::EdgeHandle, int> aSing2singularLinkIdx;
-    map<OVM::VertexHandle, vector<int>> n2singularLinksOut;
-    map<OVM::VertexHandle, vector<int>> n2singularLinksIn;
-    getSingularLinks(singularLinks, aSing2singularLinkIdx, n2singularLinksOut, n2singularLinksIn);
+    vector<MCQuantizer::CriticalLink> criticalLinks;
+    map<OVM::EdgeHandle, int> a2criticalLinkIdx;
+    map<OVM::VertexHandle, vector<int>> n2criticalLinksOut;
+    map<OVM::VertexHandle, vector<int>> n2criticalLinksIn;
+    getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
+
+    _arcIsCritical = vector<bool>(mcMesh.n_edges(), false);
+    for (auto& kv : a2criticalLinkIdx)
+        _arcIsCritical[kv.first.idx()] = true;
+
+    int nCircular = 0;
+    for (auto path : criticalLinks)
+        if (path.cyclic)
+            nCircular++;
+    LOG(INFO) << nCircular << " cyclic links out of " << criticalLinks.size();
 
     // Mark singular nodes (including those inserted into circular arcs)
-    _singularNodeType = vector<SingularNodeType>(mcMesh.n_vertices(), NONE);
-    for (auto* coll : {&n2singularLinksIn, &n2singularLinksOut})
+    _constraintNodeType = vector<ConstraintNodeType>(mcMesh.n_vertices(), NONE);
+    for (auto* coll : {&n2criticalLinksIn, &n2criticalLinksOut})
         for (auto& kv : *coll)
         {
-            if (nodeType(kv.first) == NodeType::SINGULAR)
-                _singularNodeType[kv.first.idx()] = NATIVE;
+            auto type = nodeType(kv.first);
+            if (type.first == SingularNodeType::SINGULAR || type.second == FeatureNodeType::FEATURE
+                || (type.first == SingularNodeType::SEMI_SINGULAR && type.second == FeatureNodeType::SEMI_FEATURE))
+                _constraintNodeType[kv.first.idx()] = NATIVE;
             else
-                _singularNodeType[kv.first.idx()] = ARTIFICIAL_ON_LINK;
+                _constraintNodeType[kv.first.idx()] = ARTIFICIAL_ON_LINK;
         }
 
     vector<BoundaryRegion> boundaryRegions;
     map<OVM::HalfFaceHandle, int> hp2boundaryID;
     getBoundaryRegions(boundaryRegions, hp2boundaryID);
 
-    // Check for boundary regions with no singular nodes or singular arcs in them
+    int nBorderless = 0;
+    for (auto& region : boundaryRegions)
+        if (region.boundaryHas.empty())
+            nBorderless++;
+    LOG(INFO) << nBorderless << " borderless boundary regions out of " << boundaryRegions.size();
+
+    // Check for boundary regions with no critical nodes or critical arcs in them
     for (auto& region : boundaryRegions)
     {
-        bool hasSingularity = false;
-        for (auto n : region.patchNs)
-            if (nodeType(n) != NodeType::REGULAR)
+        bool hasCriticalNode = false;
+        for (auto n : region.ns)
+            if (n2criticalLinksIn.count(n) != 0 || n2criticalLinksOut.count(n) != 0)
             {
-                hasSingularity = true;
+                hasCriticalNode = true;
                 break;
             }
-        if (hasSingularity)
+        if (hasCriticalNode)
             continue;
-        assert(!region.patchNs.empty());
-        _singularNodeType[region.patchNs.begin()->idx()] = ARTIFICIAL_ON_BOUNDARY;
+        assert(!region.ns.empty());
+        _constraintNodeType[region.ns.begin()->idx()] = ARTIFICIAL_ON_BOUNDARY;
     }
 
-    markCutPatches();
-    cutSurfaces = _cutSurfaces;
-    p2cutSurface = _cutSurfaceID;
+    int nNative = 0;
+    int nArtificialOnLink = 0;
+    int nArtificialOnBoundary = 0;
+    for (auto n : mcMesh.vertices())
+        if (_constraintNodeType[n.idx()] == NATIVE)
+            nNative++;
+        else if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
+            nArtificialOnBoundary++;
+        else if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK)
+            nArtificialOnLink++;
+
+    int nBoth = 0;
+    for (auto n : mcMesh.vertices())
+        if (nodeType(n).first == SingularNodeType::SINGULAR && nodeType(n).second == FeatureNodeType::FEATURE)
+            nBoth++;
+
+    LOG(INFO) << "Nodes that are feature and singular: " << nBoth;
+    LOG(INFO) << nNative << " native singular nodes, " << nArtificialOnLink
+              << " singular nodes inserted on cyclic singular links, " << nArtificialOnBoundary
+              << " singular nodes inserted on borderless boundary region ("
+              << nNative + nArtificialOnBoundary + nArtificialOnLink << " total)";
 }
 
 void ConstraintExtractor::markCutPatches()
@@ -614,7 +595,7 @@ void ConstraintExtractor::markCutPatches()
 
         // Find strictly singular node
         for (auto n : mcMesh.vertices())
-            if (_singularNodeType[n.idx()] == NATIVE)
+            if (_constraintNodeType[n.idx()] == NATIVE)
             {
                 _bRoot = *mcMesh.vc_iter(n);
                 _nRoot = n;
@@ -625,8 +606,8 @@ void ConstraintExtractor::markCutPatches()
         if (!_nRoot.is_valid())
         {
             for (auto n : mcMesh.vertices())
-                if (_singularNodeType[n.idx()] == ARTIFICIAL_ON_LINK
-                    || _singularNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
+                if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK
+                    || _constraintNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
                 {
                     _bRoot = *mcMesh.vc_iter(n);
                     _nRoot = n;
@@ -868,7 +849,7 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCutSurfaceCycles()
 
             // Find strictly singular node
             for (auto n : mcMesh.vertices())
-                if (_singularNodeType[n.idx()] == NATIVE)
+                if (_constraintNodeType[n.idx()] == NATIVE)
                 {
                     bool onCutSurface = false;
                     for (auto p : mcMesh.vertex_faces(n))
@@ -888,8 +869,8 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCutSurfaceCycles()
             if (!nRootAlt.is_valid())
             {
                 for (auto n : mcMesh.vertices())
-                    if (_singularNodeType[n.idx()] == ARTIFICIAL_ON_LINK
-                        || _singularNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
+                    if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK
+                        || _constraintNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
                     {
                         bool onCutSurface = false;
                         for (auto p : mcMesh.vertex_faces(n))
@@ -1089,12 +1070,11 @@ list<OVM::HalfEdgeHandle> ConstraintExtractor::pathThroughBlock(const OVM::Verte
     throw std::logic_error("No path found");
 }
 
-void
-ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
-                                                  list<OVM::CellHandle>& pathTets,
-                                                  const map<OVM::EdgeHandle, OVM::EdgeHandle>& e2parent,
-                                                  const map<OVM::FaceHandle, OVM::FaceHandle>& f2parent,
-                                                  const map<OVM::CellHandle, OVM::CellHandle>& tet2parent) const
+void ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
+                                                       list<OVM::CellHandle>& pathTets,
+                                                       const map<OVM::EdgeHandle, OVM::EdgeHandle>& e2parent,
+                                                       const map<OVM::FaceHandle, OVM::FaceHandle>& f2parent,
+                                                       const map<OVM::CellHandle, OVM::CellHandle>& tet2parent) const
 {
     auto& tetMesh = _meshPropsC.mesh;
 
@@ -1107,7 +1087,7 @@ ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
         if (_meshPropsC.get<IS_ORIGINAL_VTX>(v))
             continue;
 
-        SingularNodeType type = _singularNodeType[_meshPropsC.get<MC_NODE>(v).idx()];
+        ConstraintNodeType type = _constraintNodeType[_meshPropsC.get<MC_NODE>(v).idx()];
 
         assert(type != NATIVE);
         assert(type != NONE);
@@ -1118,8 +1098,7 @@ ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
             OVM::EdgeHandle eSingular;
             for (auto e : tetMesh.vertex_edges(v))
             {
-                if (_meshPropsC.get<MC_ARC>(e).is_valid()
-                    && _mcMeshPropsC.get<ARC_IS_SINGULAR>(_meshPropsC.get<MC_ARC>(e)))
+                if (_meshPropsC.get<MC_ARC>(e).is_valid() && _mcMeshPropsC.get<IS_SINGULAR>(_meshPropsC.get<MC_ARC>(e)))
                 {
                     eSingular = e;
                     break;
@@ -1271,7 +1250,7 @@ int ConstraintExtractor::getCycleCoord(const OVM::CellHandle& tetStart,
                                       {
                                           auto a = _meshPropsC.get<MC_ARC>(tetMesh.edge_handle(he));
                                           if (tetMesh.from_vertex_handle(he) == vConn && a.is_valid()
-                                              && _mcMeshPropsC.get<ARC_IS_SINGULAR>(a))
+                                              && _arcIsCritical[a.idx()])
                                           {
                                               cycleHe = he;
                                               cycleTet = tet;
