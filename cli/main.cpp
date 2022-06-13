@@ -100,45 +100,6 @@ int main(int argc, char** argv)
     else
         ASSERT_SUCCESS("Reading seamless map", reader.readSeamlessParam());
 
-    Quantizer q(meshRaw);
-    for (auto tet : meshRaw.cells())
-        for (auto v : meshRaw.tet_vertices(tet))
-            q.setParam(tet, v, Vec3Q2d(meshProps.ref<CHART>(tet).at(v)));
-
-    if (!constraintFile.empty())
-    {
-        vector<PathConstraint> constraints;
-        int nHexes = 0;
-        q.quantize(scaling, constraints, nHexes);
-
-        vector<ConstraintExtractor::TetPathConstraint> constraintPaths;
-        for (auto constraint : constraints)
-        {
-            constraintPaths.emplace_back();
-            constraintPaths.back().vFrom = constraint.vFrom;
-            constraintPaths.back().vTo = constraint.vTo;
-            for (auto hf : constraint.pathHalffaces)
-                constraintPaths.back().pathOrigTets.push_back(meshRaw.incident_cell(hf));
-            constraintPaths.back().pathOrigTets.push_back(constraint.tetTo);
-            constraintPaths.back().offset = constraint.offset;
-        }
-        std::ofstream _os(constraintFile);
-        auto& mcMeshProps = *meshProps.get<MC_MESH_PROPS>();
-
-        _os << nHexes << std::endl;
-        _os << constraintPaths.size() << std::endl;
-        for (auto& path : constraintPaths)
-        {
-            _os << path.vFrom << " " << path.vTo << std::endl;
-            _os << path.offset << std::endl;
-            _os << path.pathOrigTets.size() << " ";
-            for (auto it = path.pathOrigTets.begin(); it != path.pathOrigTets.end() - 1; it++)
-                _os << it->idx() << " ";
-            _os << path.pathOrigTets.back() << std::endl;
-        }
-        return 0;
-    }
-
     MCGenerator mcgen(meshProps);
     if (!inputHasMCwalls)
     {
