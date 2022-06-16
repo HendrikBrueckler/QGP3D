@@ -54,7 +54,7 @@ It outputs the integer spacing constraints between critical vertices of the inpu
 After building the CLI app can be found in ```build/Build/bin/cli``` .
 For full information on its usage, execute
 
-    QGP3D_cli --help
+    qgp3d_cli --help
 
 Example input can be found in folder ```extern/MC3D/tests/resources```.
 
@@ -63,7 +63,7 @@ A simple interface is provided in ```QGP3D/Quantizer.hpp```.
 It can be used like this:
 
 ```cpp
-// Generation of tet mesh and seamless parametrization
+// Generation of tet mesh and seamless parametrization, optionally feature markers
 // ...
 
 // tetMesh: your mc3d::TetMesh
@@ -73,6 +73,17 @@ qgp3d::Quantizer quantizer(tetMesh);
 for (auto tet: tetMesh.cells())
     for (auto v: tetMesh.cell_vertices(tet))
         quantizer.setParam(tet, v, param[tet][v]);
+        
+// isFeatureF, isFeatureE, isFeatureV: your properties marking features
+for (auto f: tetMesh.faces())
+    if (isFeatureF[f])
+        quantizer.setFeature(f, true);
+for (auto e: tetMesh.edges())
+    if (isFeatureE[e])
+        quantizer.setFeature(e, true);
+for (auto v: tetMesh.vertices())
+    if (isFeatureV[v])
+        quantizer.setFeature(v, true);
 
 // This scaling factor is applied to the parametrization before quantization
 double scaling = 1.0;
