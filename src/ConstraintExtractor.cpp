@@ -1203,7 +1203,7 @@ std::pair<int, int> ConstraintExtractor::getBoundaryCoords(const OVM::CellHandle
     vector<bool> tetVisited(tetMesh.n_cells(), false);
     forVertexNeighbourTetsInBlock(vConn,
                                   tetStart,
-                                  [&boundaryHf, vConn, &tetMesh, this](const OVM::CellHandle& tet)
+                                  [&boundaryHf, vConn, &tetMesh](const OVM::CellHandle& tet)
                                   {
                                       for (auto hf : tetMesh.cell_halffaces(tet))
                                       {

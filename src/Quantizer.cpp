@@ -98,7 +98,7 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
     case MCGenerator::SPLITTING_FAILED:
     case MCGenerator::BUILDING_MC_FAILED:
         return MC_CONSTRUCTION_ERROR;
-    case SUCCESS:
+    case MCGenerator::SUCCESS:
         break; // noop
     }
 
@@ -108,7 +108,7 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
     {
     case MCQuantizer::SOLVER_ERROR:
         return MC_QUANTIZATION_ERROR;
-    case SUCCESS:
+    case MCQuantizer::SUCCESS:
         break; // noop
     }
 

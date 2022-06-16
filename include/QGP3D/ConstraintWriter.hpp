@@ -39,7 +39,6 @@ class ConstraintWriter : public TetMeshNavigator
   private:
     const std::string _fileName;
     std::ofstream _os;
-    bool _exact;
 
     map<int, int> _vtx2idx; // Internal map of vtx mesh idx to vtx output idx
 
