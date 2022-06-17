@@ -13,6 +13,32 @@ namespace qgp3d
 Quantizer::Quantizer(const TetMesh& tetMesh) : _tetMesh(tetMesh), _meshCopy(_tetMesh), _mcMesh(), _meshProps(_meshCopy, _mcMesh)
 {
     _meshProps.allocate<CHART>();
+#ifndef NDEBUG
+    for (auto tet: tetMesh.cells())
+    {
+        vector<OVM::VertexHandle> vs;
+        vector<OVM::VertexHandle> vsCopy;
+        for (auto v: tetMesh.tet_vertices(tet))
+            vs.emplace_back(v);
+        for (auto v: _meshCopy.tet_vertices(tet))
+            vsCopy.emplace_back(v);
+        assert(vs == vsCopy);
+        vector<OVM::EdgeHandle> es;
+        vector<OVM::EdgeHandle> esCopy;
+        for (auto e: tetMesh.cell_edges(tet))
+            es.emplace_back(e);
+        for (auto e: _meshCopy.cell_edges(tet))
+            esCopy.emplace_back(e);
+        assert(es == esCopy);
+        vector<OVM::HalfFaceHandle> hfs;
+        vector<OVM::HalfFaceHandle> hfsCopy;
+        for (auto hf: tetMesh.cell_halffaces(tet))
+            hfs.emplace_back(hf);
+        for (auto hf: _meshCopy.cell_halffaces(tet))
+            hfsCopy.emplace_back(hf);
+        assert(hfs == hfsCopy);
+    }
+#endif
 }
 
 void Quantizer::setParam(const OVM::CellHandle& tet, const OVM::VertexHandle& corner, const Vec3d& uvw)
