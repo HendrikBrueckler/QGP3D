@@ -68,7 +68,7 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
         TS3D::TrulySeamless3D sanitizer(_meshCopy);
         for (auto tet : _meshCopy.cells())
             for (auto v : _meshCopy.tet_vertices(tet))
-                sanitizer.parameter(tet, v) = Vec3Q2d(_meshProps.ref<CHART>(tet).at(v));
+                sanitizer.setParam(tet, v, Vec3Q2d(_meshProps.ref<CHART>(tet).at(v)));
         if (!sanitizer.init() || !sanitizer.sanitize(0.0, true))
         {
             LOG(ERROR) << "Sanitization failed";
@@ -76,7 +76,7 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
         }
         for (auto tet : _meshCopy.cells())
             for (auto v : _meshCopy.tet_vertices(tet))
-                _meshProps.ref<CHART>(tet).at(v) = sanitizer.parameter(tet, v);
+                _meshProps.ref<CHART>(tet).at(v) = sanitizer.getParam(tet, v);
     }
     catch (std::runtime_error& e)
     {
