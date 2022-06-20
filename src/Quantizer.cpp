@@ -10,31 +10,32 @@
 namespace qgp3d
 {
 
-Quantizer::Quantizer(const TetMesh& tetMesh) : _tetMesh(tetMesh), _meshCopy(_tetMesh), _mcMesh(), _meshProps(_meshCopy, _mcMesh)
+Quantizer::Quantizer(const TetMesh& tetMesh)
+    : _tetMesh(tetMesh), _meshCopy(_tetMesh), _mcMesh(), _meshProps(_meshCopy, _mcMesh)
 {
     _meshProps.allocate<CHART>();
 #ifndef NDEBUG
-    for (auto tet: tetMesh.cells())
+    for (auto tet : tetMesh.cells())
     {
         vector<OVM::VertexHandle> vs;
         vector<OVM::VertexHandle> vsCopy;
-        for (auto v: tetMesh.tet_vertices(tet))
+        for (auto v : tetMesh.tet_vertices(tet))
             vs.emplace_back(v);
-        for (auto v: _meshCopy.tet_vertices(tet))
+        for (auto v : _meshCopy.tet_vertices(tet))
             vsCopy.emplace_back(v);
         assert(vs == vsCopy);
         vector<OVM::EdgeHandle> es;
         vector<OVM::EdgeHandle> esCopy;
-        for (auto e: tetMesh.cell_edges(tet))
+        for (auto e : tetMesh.cell_edges(tet))
             es.emplace_back(e);
-        for (auto e: _meshCopy.cell_edges(tet))
+        for (auto e : _meshCopy.cell_edges(tet))
             esCopy.emplace_back(e);
         assert(es == esCopy);
         vector<OVM::HalfFaceHandle> hfs;
         vector<OVM::HalfFaceHandle> hfsCopy;
-        for (auto hf: tetMesh.cell_halffaces(tet))
+        for (auto hf : tetMesh.cell_halffaces(tet))
             hfs.emplace_back(hf);
-        for (auto hf: _meshCopy.cell_halffaces(tet))
+        for (auto hf : _meshCopy.cell_halffaces(tet))
             hfsCopy.emplace_back(hf);
         assert(hfs == hfsCopy);
     }
@@ -43,7 +44,8 @@ Quantizer::Quantizer(const TetMesh& tetMesh) : _tetMesh(tetMesh), _meshCopy(_tet
 
 void Quantizer::setParam(const OVM::CellHandle& tet, const OVM::VertexHandle& corner, const Vec3d& uvw)
 {
-    assert(set<OVM::VertexHandle>(_meshCopy.tet_vertices(tet).first, _meshCopy.tet_vertices(tet).second).count(corner) != 0);
+    assert(set<OVM::VertexHandle>(_meshCopy.tet_vertices(tet).first, _meshCopy.tet_vertices(tet).second).count(corner)
+           != 0);
     _meshProps.ref<CHART>(tet)[corner] = Vec3Q(uvw);
 }
 
@@ -89,12 +91,61 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
     if (invalidCharts)
         return INVALID_CHART;
 
+    if (_meshProps.isAllocated<IS_FEATURE_F>())
+    {
+        _meshProps.allocate<IS_FEATURE_E>();
+        // Make features consistent:
+        // Mark each edge that has != 0 or != 2 feature patches as feature
+        for (auto e : _meshCopy.edges())
+        {
+            if (_meshProps.get<IS_FEATURE_E>(e))
+                continue;
+
+            int nFeatureFaces = 0;
+            for (auto f : _meshCopy.edge_faces(e))
+                if (_meshProps.get<IS_FEATURE_F>(f))
+                    nFeatureFaces++;
+            if (nFeatureFaces != 2 && nFeatureFaces != 0)
+                _meshProps.set<IS_FEATURE_E>(e, true);
+        }
+    }
+
+    if (_meshProps.isAllocated<IS_FEATURE_E>())
+    {
+        _meshProps.allocate<IS_FEATURE_V>();
+        // Mark each vertex that has != 0 or != 2 feature edges as feature
+        for (auto v : _meshCopy.vertices())
+        {
+            if (_meshProps.get<IS_FEATURE_V>(v))
+                continue;
+
+            int nFeatureEdges = 0;
+            for (auto e : _meshCopy.vertex_edges(v))
+                if (_meshProps.get<IS_FEATURE_E>(e))
+                    nFeatureEdges++;
+            if (nFeatureEdges != 2 && nFeatureEdges != 0)
+                _meshProps.set<IS_FEATURE_V>(v, true);
+        }
+    }
+
     try
     {
         TS3D::TrulySeamless3D sanitizer(_meshCopy);
         for (auto tet : _meshCopy.cells())
             for (auto v : _meshCopy.tet_vertices(tet))
                 sanitizer.setParam(tet, v, Vec3Q2d(_meshProps.ref<CHART>(tet).at(v)));
+        if (_meshProps.isAllocated<IS_FEATURE_E>())
+            for (auto e : _meshCopy.edges())
+                if (_meshProps.get<IS_FEATURE_E>(e))
+                    sanitizer.setFeature(e);
+        if (_meshProps.isAllocated<IS_FEATURE_V>())
+            for (auto v : _meshCopy.vertices())
+                if (_meshProps.get<IS_FEATURE_V>(v))
+                    sanitizer.setFeature(v);
+        if (_meshProps.isAllocated<IS_FEATURE_F>())
+            for (auto f : _meshCopy.faces())
+                if (_meshProps.get<IS_FEATURE_F>(f))
+                    sanitizer.setFeature(f);
         if (!sanitizer.init() || !sanitizer.sanitize(0.0, true))
         {
             LOG(ERROR) << "Sanitization failed";
