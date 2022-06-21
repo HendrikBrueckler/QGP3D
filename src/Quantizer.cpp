@@ -1,11 +1,11 @@
 #include "QGP3D/Quantizer.hpp"
 
-#include <MC3D/Interface/MCGenerator.hpp>
-
 #include "QGP3D/ConstraintExtractor.hpp"
 #include "QGP3D/MCQuantizer.hpp"
 
-#include "TrulySeamless3D/trulyseamless.h"
+#include <MC3D/Interface/MCGenerator.hpp>
+
+#include <TS3D/trulyseamless.h>
 
 namespace qgp3d
 {

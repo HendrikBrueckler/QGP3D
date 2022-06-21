@@ -1228,7 +1228,7 @@ std::pair<int, int> ConstraintExtractor::getBoundaryCoords(const OVM::CellHandle
     connectingTets.push_front(tetStart);
     auto coord = toCoord(transOrigCurr.chain(transitionAlongPath(connectingTets))
                              .invert()
-                             .rotate(axisAlignedHalfFaceNormal(boundaryHf)));
+                             .rotate(normalDirUVW(boundaryHf)));
     return {coord == 0 ? 1 : 0, coord == 2 ? 1 : 2};
 }
 
