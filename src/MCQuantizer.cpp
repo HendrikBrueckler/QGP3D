@@ -159,7 +159,7 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
         map<OVM::VertexHandle, vector<int>> n2criticalLinksIn;
 
         int nSeparationConstraints = 0;
-        getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn);
+        getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
 
         for (auto& criticalLink : criticalLinks)
         {
@@ -233,8 +233,7 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 {
                     auto type = nodeType(n);
                     if (type.first == SingularNodeType::SINGULAR || type.second == FeatureNodeType::FEATURE
-                        || (type.first == SingularNodeType::SEMI_SINGULAR
-                            && type.second == FeatureNodeType::SEMI_FEATURE))
+                        || type.second == FeatureNodeType::SEMI_FEATURE_SINGULAR_BRANCH)
                         isCriticalNode[n.idx()] = true;
                 }
                 for (auto p : mc.faces())

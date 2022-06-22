@@ -524,7 +524,7 @@ void ConstraintExtractor::assignNodeTypes()
         {
             auto type = nodeType(kv.first);
             if (type.first == SingularNodeType::SINGULAR || type.second == FeatureNodeType::FEATURE
-                || (type.first == SingularNodeType::SEMI_SINGULAR && type.second == FeatureNodeType::SEMI_FEATURE))
+                || type.second == FeatureNodeType::SEMI_FEATURE_SINGULAR_BRANCH)
                 _constraintNodeType[kv.first.idx()] = NATIVE;
             else
                 _constraintNodeType[kv.first.idx()] = ARTIFICIAL_ON_LINK;
@@ -567,12 +567,6 @@ void ConstraintExtractor::assignNodeTypes()
         else if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK)
             nArtificialOnLink++;
 
-    int nBoth = 0;
-    for (auto n : mcMesh.vertices())
-        if (nodeType(n).first == SingularNodeType::SINGULAR && nodeType(n).second == FeatureNodeType::FEATURE)
-            nBoth++;
-
-    LOG(INFO) << "Nodes that are feature and singular: " << nBoth;
     LOG(INFO) << nNative << " native singular nodes, " << nArtificialOnLink
               << " singular nodes inserted on cyclic singular links, " << nArtificialOnBoundary
               << " singular nodes inserted on borderless boundary region ("
@@ -1226,9 +1220,8 @@ std::pair<int, int> ConstraintExtractor::getBoundaryCoords(const OVM::CellHandle
         throw std::logic_error("Artificial singular node that is not incident on a cyclic singularity");
     auto connectingTets = connectingTetPath(tetStart, boundaryHf, vConn);
     connectingTets.push_front(tetStart);
-    auto coord = toCoord(transOrigCurr.chain(transitionAlongPath(connectingTets))
-                             .invert()
-                             .rotate(normalDirUVW(boundaryHf)));
+    auto coord
+        = toCoord(transOrigCurr.chain(transitionAlongPath(connectingTets)).invert().rotate(normalDirUVW(boundaryHf)));
     return {coord == 0 ? 1 : 0, coord == 2 ? 1 : 2};
 }
 

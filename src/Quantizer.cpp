@@ -93,7 +93,8 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
 
     if (_meshProps.isAllocated<IS_FEATURE_F>())
     {
-        _meshProps.allocate<IS_FEATURE_E>();
+        if (!_meshProps.isAllocated<IS_FEATURE_E>())
+            _meshProps.allocate<IS_FEATURE_E>();
         // Make features consistent:
         // Mark each edge that has != 0 or != 2 feature patches as feature
         for (auto e : _meshCopy.edges())
@@ -112,7 +113,8 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
 
     if (_meshProps.isAllocated<IS_FEATURE_E>())
     {
-        _meshProps.allocate<IS_FEATURE_V>();
+        if (!_meshProps.isAllocated<IS_FEATURE_V>())
+            _meshProps.allocate<IS_FEATURE_V>();
         // Mark each vertex that has != 0 or != 2 feature edges as feature
         for (auto v : _meshCopy.vertices())
         {

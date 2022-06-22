@@ -101,132 +101,13 @@ int main(int argc, char** argv)
         ASSERT_SUCCESS("Reading seamless map", reader.readSeamlessParam());
 
     MCGenerator mcgen(meshProps);
-
-    int nHes = meshRaw.n_halfedges();
-    for (int i = 0; i < nHes; i += 51)
-        mcgen.splitHalfEdge(OVM::HalfEdgeHandle(i), *meshRaw.hec_iter(OVM::HalfEdgeHandle(i)), 0.5);
     if (!inputHasMCwalls)
     {
-        if (simulateFeatures)
-        {
-            meshProps.allocate<IS_FEATURE_F>(false);
-            meshProps.allocate<IS_FEATURE_E>(false);
-            meshProps.allocate<IS_FEATURE_V>(false);
-            // // Assign some random features
-            meshProps.set<IS_FEATURE_V>(OVM::VertexHandle(meshRaw.n_vertices() / 5), true);
-            meshProps.set<IS_FEATURE_V>(OVM::VertexHandle(meshRaw.n_vertices() / 3), true);
-            meshProps.set<IS_FEATURE_V>(OVM::VertexHandle(meshRaw.n_vertices() / 2), true);
-
-            int i = 0;
-            for (auto e : meshRaw.edges())
-            {
-                if (i == 3)
-                    break;
-                auto tet = *meshRaw.ec_iter(e);
-                if (dim(mcgen.edgeDirection(e, tet)) == 1)
-                {
-                    i++;
-                    meshProps.set<IS_FEATURE_E>(e, true);
-                }
-            }
-
-            // i = 0;
-            // for (auto hf : meshRaw.halffaces())
-            // {
-            //     if (!meshRaw.is_boundary(hf))
-            //         continue;
-            //     if (i == 3)
-            //         break;
-            //     for (auto he : meshRaw.halfface_halfedges(hf))
-            //     {
-            //         auto tet = *meshRaw.hec_iter(he);
-            //         if (dim(mcgen.edgeDirection(meshRaw.edge_handle(he), tet)) != 1)
-            //         {
-            //             auto hfNext = OVM::HalfFaceHandle();
-            //             for (auto hf : meshRaw.halfedge_halffaces(meshRaw.opposite_halfedge_handle(he)))
-            //                 if (meshRaw.is_boundary(hf))
-            //                 {
-            //                     hfNext = hf;
-            //                     break;
-            //                 }
-            //             meshProps.set<IS_FEATURE_F>(meshRaw.face_handle(hfNext), true);
-            //             meshProps.set<IS_FEATURE_F>(meshRaw.face_handle(hf), true);
-            //         }
-            //     }
-            //     i++;
-            // }
-        }
-
-        qgp3d::Quantizer quant(meshRaw);
-        for (auto tet: meshRaw.cells())
-            for (auto v: meshRaw.tet_vertices(tet))
-                quant.setParam(tet, v, Vec3Q2d(meshProps.ref<CHART>(tet).at(v)));
-
-        if (simulateFeatures)
-        {
-            for (auto f: meshRaw.faces())
-                if (meshProps.get<IS_FEATURE_F>(f))
-                    quant.setFeature(f, true);
-            for (auto v: meshRaw.vertices())
-                if (meshProps.get<IS_FEATURE_V>(v))
-                    quant.setFeature(v, true);
-            for (auto e: meshRaw.edges())
-                if (meshProps.get<IS_FEATURE_E>(e))
-                    quant.setFeature(e, true);
-        }
-
-        vector<qgp3d::PathConstraint> pathConstraints;
-        int nHexes = 0;
-        quant.quantize(scaling, pathConstraints, nHexes);
-
-        return 0;
-
         // For default usage, the interface is simple to use and requires no property management
         ASSERT_SUCCESS("Tracing and connecting the raw MC",
                        mcgen.traceMC(true, splitSelfadjacent, simulateBC, !constraintFile.empty()));
-
-        int nPreArc = 0;
-        int nPreNode = 0;
-        int nPrePatch = 0;
-        if (simulateFeatures)
-        {
-            auto& mcMeshProps = *meshProps.get<MC_MESH_PROPS>();
-            for (auto p : mcMeshRaw.faces())
-                if (mcMeshProps.get<IS_FEATURE_F>(p))
-                    nPrePatch++;
-            for (auto a : mcMeshRaw.edges())
-                if (mcMeshProps.get<IS_FEATURE_E>(a))
-                    nPreArc++;
-            for (auto n : mcMeshRaw.vertices())
-                if (mcMeshProps.get<IS_FEATURE_V>(n))
-                    nPreNode++;
-            assert(nPreNode != 0);
-            assert(nPreArc != 0);
-            assert(nPrePatch != 0);
-        }
         if (!simulateBC)
             ASSERT_SUCCESS("Reducing the raw MC", mcgen.reduceMC(!reduceSingularWalls, splitSelfadjacent));
-
-        if (simulateFeatures)
-        {
-            int nArc = 0;
-            int nPatch = 0;
-            int nNode = 0;
-            auto& mcMeshProps = *meshProps.get<MC_MESH_PROPS>();
-            for (auto p : mcMeshRaw.faces())
-                if (mcMeshProps.get<IS_FEATURE_F>(p))
-                    nPatch++;
-            for (auto a : mcMeshRaw.edges())
-                if (mcMeshProps.get<IS_FEATURE_E>(a))
-                    nArc++;
-            for (auto n : mcMeshRaw.vertices())
-                if (mcMeshProps.get<IS_FEATURE_V>(n))
-                    nNode++;
-            assert(nPreNode == nNode);
-            assert(nPreArc == nArc);
-            assert(nPrePatch == nPatch);
-            LOG(INFO) << "Feature nodes: " << nNode;
-        }
     }
     else
     {
