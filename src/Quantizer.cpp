@@ -181,6 +181,22 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
         break; // noop
     }
 
+    retGen = mcGen.reduceMC(true, true, true);
+    switch (retGen)
+    {
+    case MCGenerator::MISSING_CHART:
+        return MISSING_CHART;
+    case MCGenerator::INVALID_SINGULARITY:
+        return INVALID_SINGULARITY;
+    case MCGenerator::SPAWNING_FAILED:
+    case MCGenerator::TRACING_FAILED:
+    case MCGenerator::SPLITTING_FAILED:
+    case MCGenerator::BUILDING_MC_FAILED:
+        return MC_CONSTRUCTION_ERROR;
+    case MCGenerator::SUCCESS:
+        break; // noop
+    }
+
     auto retQuant = MCQuantizer(_meshProps).quantizeArcLengths(scaleFactor, true, true);
 
     switch (retQuant)
