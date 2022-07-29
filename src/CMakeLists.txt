@@ -74,7 +74,7 @@ set_target_properties(QGP3D PROPERTIES
                       CXX_STANDARD 17
                       CXX_STANDARD_REQUIRED ON)
 # compile options
-list(APPEND QGP3D_COMPILE_OPTIONS_PRV "-Wall" "-Wextra" "-Werror" "-Wshadow" "-Wunused" "-Wunused-function")
+list(APPEND QGP3D_COMPILE_OPTIONS_PRV "-Wall" "-Wextra" "-Wshadow" "-Wunused" "-Wunused-function")
 target_compile_options(QGP3D PRIVATE ${QGP3D_COMPILE_OPTIONS_PRV})
 # preprocessor defines
 if (NOT QGP3D_ENABLE_LOGGING)
