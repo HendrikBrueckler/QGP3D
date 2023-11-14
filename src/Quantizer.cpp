@@ -14,37 +14,11 @@ Quantizer::Quantizer(const TetMesh& tetMesh)
     : _tetMesh(tetMesh), _meshCopy(_tetMesh), _mcMesh(), _meshProps(_meshCopy, _mcMesh)
 {
     _meshProps.allocate<CHART>();
-#ifndef NDEBUG
-    for (auto tet : tetMesh.cells())
-    {
-        vector<OVM::VertexHandle> vs;
-        vector<OVM::VertexHandle> vsCopy;
-        for (auto v : tetMesh.tet_vertices(tet))
-            vs.emplace_back(v);
-        for (auto v : _meshCopy.tet_vertices(tet))
-            vsCopy.emplace_back(v);
-        assert(vs == vsCopy);
-        vector<OVM::EdgeHandle> es;
-        vector<OVM::EdgeHandle> esCopy;
-        for (auto e : tetMesh.cell_edges(tet))
-            es.emplace_back(e);
-        for (auto e : _meshCopy.cell_edges(tet))
-            esCopy.emplace_back(e);
-        assert(es == esCopy);
-        vector<OVM::HalfFaceHandle> hfs;
-        vector<OVM::HalfFaceHandle> hfsCopy;
-        for (auto hf : tetMesh.cell_halffaces(tet))
-            hfs.emplace_back(hf);
-        for (auto hf : _meshCopy.cell_halffaces(tet))
-            hfsCopy.emplace_back(hf);
-        assert(hfs == hfsCopy);
-    }
-#endif
 }
 
-void Quantizer::setParam(const OVM::CellHandle& tet, const OVM::VertexHandle& corner, const Vec3d& uvw)
+void Quantizer::setParam(const OVM::CellHandle& tet, const VH& corner, const Vec3d& uvw)
 {
-    assert(set<OVM::VertexHandle>(_meshCopy.tet_vertices(tet).first, _meshCopy.tet_vertices(tet).second).count(corner)
+    assert(set<VH>(_meshCopy.tet_vertices(tet).first, _meshCopy.tet_vertices(tet).second).count(corner)
            != 0);
     _meshProps.ref<CHART>(tet)[corner] = Vec3Q(uvw);
 }
@@ -63,7 +37,7 @@ void Quantizer::setFeature(const OVM::EdgeHandle& e, bool isFeature)
     _meshProps.set<IS_FEATURE_E>(e, isFeature);
 }
 
-void Quantizer::setFeature(const OVM::VertexHandle& v, bool isFeature)
+void Quantizer::setFeature(const VH& v, bool isFeature)
 {
     if (!_meshProps.isAllocated<IS_FEATURE_V>())
         _meshProps.allocate<IS_FEATURE_V>(false);
@@ -76,12 +50,13 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
     bool invalidCharts = false;
     for (auto tet : _meshCopy.cells())
     {
-        if (mcGen.volumeUVW(tet) == 0)
+        Q vol = mcGen.rationalVolumeUVW(tet);
+        if (vol == 0)
         {
             LOG(ERROR) << "Degenerate parametrization in tet " << tet;
             invalidCharts = true;
         }
-        else if (mcGen.volumeUVW(tet) < 0)
+        else if (vol < 0)
         {
             LOG(ERROR) << "Flipped parametrization in tet " << tet;
             invalidCharts = true;
@@ -236,7 +211,7 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
 
     auto& mcMeshProps = *_meshProps.get<MC_MESH_PROPS>();
     nHexes = 0;
-    for (auto b : mcMeshProps.mesh.cells())
+    for (auto b : mcMeshProps.mesh().cells())
     {
         int nBlockHexes = 1;
         for (auto dir : {UVWDir::NEG_U_NEG_V, UVWDir::NEG_U_NEG_W, UVWDir::NEG_V_NEG_W})

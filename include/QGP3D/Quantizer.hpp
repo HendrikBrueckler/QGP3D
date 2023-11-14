@@ -42,7 +42,7 @@ class Quantizer
      * @param corner IN: vertex incident on \p tet
      * @param uvw IN: parametric coordinates of \p corner in chart of \p tet
      */
-    void setParam(const OVM::CellHandle& tet, const OVM::VertexHandle& corner, const Vec3d& uvw);
+    void setParam(const CH& tet, const VH& corner, const Vec3d& uvw);
 
     /**
      * @brief Mark feature faces (no feature is default).
@@ -50,7 +50,7 @@ class Quantizer
      * @param f IN: face
      * @param isFeature IN: whether \p f is a feature
      */
-    void setFeature(const OVM::FaceHandle& f, bool isFeature);
+    void setFeature(const FH& f, bool isFeature);
 
     /**
      * @brief Mark feature edges (no feature is default).
@@ -58,7 +58,7 @@ class Quantizer
      * @param e IN: edge
      * @param isFeature IN: whether \p e is a feature
      */
-    void setFeature(const OVM::EdgeHandle& e, bool isFeature);
+    void setFeature(const EH& e, bool isFeature);
 
     /**
      * @brief Mark feature vertices (no feature is default).
@@ -66,7 +66,7 @@ class Quantizer
      * @param v IN: vertex
      * @param isFeature IN: whether \p v is a feature
      */
-    void setFeature(const OVM::VertexHandle& v, bool isFeature);
+    void setFeature(const VH& v, bool isFeature);
 
     /**
      * @brief Generate constraints for the quantization of the input seamless parametrization.

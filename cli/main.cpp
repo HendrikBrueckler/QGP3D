@@ -118,9 +118,9 @@ int main(int argc, char** argv)
         meshProps.allocate<CHILD_CELLS>({});
         meshProps.allocate<CHILD_EDGES>({});
         meshProps.allocate<CHILD_FACES>({});
-        meshProps.allocate<IS_ORIGINAL>(false); // Default value = false (for future added elements)
+        meshProps.allocate<IS_ORIGINAL_F>(false); // Default value = false (for future added elements)
         for (auto f : meshRaw.faces())
-            meshProps.set<IS_ORIGINAL>(f, true); // Only current faces are original
+            meshProps.set<IS_ORIGINAL_F>(f, true); // Only current faces are original
 
         // For advanced usage, the library provides specialized classes for each algorithmic step
         SingularityInitializer init(meshProps);
@@ -129,9 +129,9 @@ int main(int argc, char** argv)
 
         if (!constraintFile.empty())
         {
-            meshProps.allocate<IS_ORIGINAL_VTX>(false);
+            meshProps.allocate<IS_ORIGINAL_V>(false);
             for (auto v : meshRaw.vertices())
-                meshProps.set<IS_ORIGINAL_VTX>(v, true);
+                meshProps.set<IS_ORIGINAL_V>(v, true);
             meshProps.allocate<CHART_ORIG>();
             for (auto tet : meshRaw.cells())
                 meshProps.set<CHART_ORIG>(tet, meshProps.ref<CHART>(tet));

@@ -20,8 +20,8 @@ MCQuantizer::MCQuantizer(TetMeshProps& meshProps)
 
 MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZero, bool allowNegative)
 {
-    const MCMesh& mc = _mcMeshProps.mesh;
-    const TetMesh& mesh = _meshProps.mesh;
+    const MCMesh& mc = mcMeshProps().mesh();
+    const TetMesh& mesh = meshProps().mesh();
 
     try
     {
@@ -34,16 +34,22 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
 
         GRBModel model = GRBModel(env);
 
-        _mcMeshProps.allocate<ARC_DBL_LENGTH>(0.0);
+        bool wasAllocated = mcMeshProps().isAllocated<ARC_DBL_LENGTH>();
+        if (!wasAllocated)
+            mcMeshProps().allocate<ARC_DBL_LENGTH>(0.0);
         // One integer length variable per arc
-        std::map<OVM::EdgeHandle, GRBVar> arc2var;
-        for (auto arc : mc.edges())
+        std::map<EH, GRBVar> arc2var;
+        for (EH arc : mc.edges())
         {
-            // Determine current arc length
-            double length = 0.0;
-            for (auto he : _mcMeshProps.ref<ARC_MESH_HALFEDGES>(arc))
-                length += edgeLengthUVW(mesh.edge_handle(he));
-            _mcMeshProps.set<ARC_DBL_LENGTH>(arc, length);
+            if (!wasAllocated)
+            {
+                // Determine current arc length
+                double length = 0.0;
+                for (HEH he : mcMeshProps().ref<ARC_MESH_HALFEDGES>(arc))
+                    length += edgeLengthUVW<CHART>(mesh.edge_handle(he));
+                mcMeshProps().set<ARC_DBL_LENGTH>(arc, length);
+            }
+            double length = mcMeshProps().get<ARC_DBL_LENGTH>(arc);
 
             // Configure gurobi var
             GRBVar x = model.addVar(allowZero ? (allowNegative ? -GRB_INFINITY : 0.0) : 0.9,
@@ -57,17 +63,19 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
 
         GRBQuadExpr objective = 0.;
         // Objective Function minimizes deviation from scaled seamless param
-        for (auto block : mc.cells())
+        for (CH block : mc.cells())
         {
             // For each axis U/V/W
-            for (auto axis : {UVWDir::NEG_V_NEG_W, UVWDir::NEG_U_NEG_W, UVWDir::NEG_U_NEG_V})
+            for (UVWDir axis : {UVWDir::NEG_V_NEG_W, UVWDir::NEG_U_NEG_W, UVWDir::NEG_U_NEG_V})
             {
                 GRBLinExpr varSum = 0.;
                 double lenSum = 0;
-                for (auto arc : _mcMeshProps.ref<BLOCK_EDGE_ARCS>(block).at(axis))
+                // WARNING this way of using range based for loop (chaining 2 function calls)
+                // depends on the first calls not returning rvalues!
+                for (EH arc : mcMeshProps().ref<BLOCK_EDGE_ARCS>(block).at(axis))
                 {
                     varSum += arc2var.at(arc);
-                    lenSum += _mcMeshProps.get<ARC_DBL_LENGTH>(arc);
+                    lenSum += mcMeshProps().get<ARC_DBL_LENGTH>(arc);
                 }
                 objective += (varSum - scaling * lenSum) * (varSum - scaling * lenSum);
             }
@@ -76,87 +84,58 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
         model.setObjective(objective, GRB_MINIMIZE);
 
         // Each patches opposite arc lengths must match
-        for (auto patch : mc.faces())
+        for (FH patch : mc.faces())
         {
-            auto halfpatch = mc.halfface_handle(patch, 0);
-            if (mc.is_boundary(halfpatch))
-                halfpatch = mc.opposite_halfface_handle(halfpatch);
+            HFH hp = mc.halfface_handle(patch, 0);
+            if (mc.is_boundary(hp))
+                hp = mc.opposite_halfface_handle(hp);
 
-            auto dir2orderedHas = halfpatchHalfarcsByDir(halfpatch);
-
+            auto dir2orderedHas = halfpatchHalfarcsByDir(hp);
             assert(dir2orderedHas.size() == 4);
-            map<UVWDir, bool> checked;
-            for (const auto& kv : dir2orderedHas)
+            UVWDir dirHpNormal = halfpatchNormalDir(hp);
+
+            for (UVWDir dirSide :
+                 decompose(~(dirHpNormal | -dirHpNormal), {UVWDir::POS_U, UVWDir::POS_V, UVWDir::POS_W}))
             {
-                auto dir = kv.first;
-                auto halfarcs = kv.second;
-                assert(!halfarcs.empty());
-                assert(dir2orderedHas.find(-dir) != dir2orderedHas.end());
-                if (checked[dir])
-                    continue;
+                UVWDir dirSideOpp = -dirSide;
 
-                std::vector<GRBVar> vars1, vars2;
-                std::vector<double> coeff1, coeff2;
-                for (auto halfarc : halfarcs)
-                {
-                    auto arc = mc.edge_handle(halfarc);
-                    vars1.push_back(arc2var.at(arc));
-                    coeff1.push_back(1.);
-                }
-                checked[dir] = true;
+                GRBLinExpr side = 0;
+                for (HEH ha : dir2orderedHas.at(dirSide))
+                    side += arc2var.at(mc.edge_handle(ha));
 
-                for (auto halfarc : dir2orderedHas.at(-dir))
-                {
-                    auto arc = mc.edge_handle(halfarc);
-                    vars2.push_back(arc2var.at(arc));
-                    coeff2.push_back(1.);
-                }
-                checked[-dir] = true;
+                GRBLinExpr sideOpp = 0;
+                for (HEH ha : dir2orderedHas.at(-dirSide))
+                    sideOpp += arc2var.at(mc.edge_handle(ha));
 
-                GRBLinExpr edge1 = 0;
-                edge1.addTerms(&coeff1[0], &vars1[0], vars1.size());
-
-                GRBLinExpr edge2 = 0;
-                edge2.addTerms(&coeff2[0], &vars2[0], vars2.size());
-
-                std::string constraintName
-                    = "Patch" + std::to_string(patch.idx()) + "dir" + std::to_string(static_cast<uint8_t>(dir));
-                model.addConstr(edge1, GRB_EQUAL, edge2, constraintName);
+                std::string constraintName = "Patch" + std::to_string(patch.idx()) + "dir"
+                                             + std::to_string(static_cast<uint8_t>(dirSide | dirSideOpp));
+                model.addConstr(side, GRB_EQUAL, sideOpp, constraintName);
             }
-            assert(checked.size() == 4);
         }
 
         if (allowNegative)
         {
             // Enforce no block with negative extension along any axis
-            for (auto b : mc.cells())
+            for (CH b : mc.cells())
             {
-                int i = 0;
-                for (auto dir : {UVWDir::POS_V_POS_W, UVWDir::POS_U_POS_W, UVWDir::POS_U_POS_V})
+                for (UVWDir dir : {UVWDir::POS_V_POS_W, UVWDir::POS_U_POS_W, UVWDir::POS_U_POS_V})
                 {
-                    auto& arcs = _mcMeshPropsC.ref<BLOCK_EDGE_ARCS>(b).at(dir);
-                    std::vector<GRBVar> vars;
-                    std::vector<double> coeff;
-                    for (auto a : arcs)
-                    {
-                        vars.emplace_back(arc2var.at(a));
-                        coeff.emplace_back(1.0);
-                    }
                     GRBLinExpr sumExpr = 0;
-                    sumExpr.addTerms(&coeff[0], &vars[0], vars.size());
-
-                    std::string constraintName = "BlockLength" + std::to_string(b.idx()) + "dir" + std::to_string(i);
+                    auto& arcs = mcMeshProps().ref<BLOCK_EDGE_ARCS>(b).at(dir);
+                    for (EH a : arcs)
+                        sumExpr += arc2var.at(a);
+                    std::string constraintName = "Block" + std::to_string(b.idx()) + "dir"
+                                                 + std::to_string(static_cast<uint8_t>(~(dir | -dir)));
                     model.addConstr(sumExpr, GRB_GREATER_EQUAL, 0.0, constraintName);
-                    i++;
                 }
             }
         }
 
         // Enforce critical links of length >= 1
         vector<CriticalLink> criticalLinks;
-        map<OVM::EdgeHandle, int> a2criticalLinkIdx;
-        map<OVM::VertexHandle, vector<int>> n2criticalLinksOut;
-        map<OVM::VertexHandle, vector<int>> n2criticalLinksIn;
+        map<EH, int> a2criticalLinkIdx;
+        map<VH, vector<int>> n2criticalLinksOut;
+        map<VH, vector<int>> n2criticalLinksIn;
 
         int nSeparationConstraints = 0;
         getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
@@ -165,23 +144,69 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
         {
             if (criticalLink.pathHas.empty())
                 continue;
-            std::vector<GRBVar> vars;
-            std::vector<double> coeff;
-            for (auto ha : criticalLink.pathHas)
-            {
-                auto arc = mc.edge_handle(ha);
-                vars.push_back(arc2var.at(arc));
-                coeff.push_back(1.);
-            }
             GRBLinExpr sumExpr = 0;
-            sumExpr.addTerms(&coeff[0], &vars[0], vars.size());
+            for (HEH ha : criticalLink.pathHas)
+                sumExpr += arc2var.at(mc.edge_handle(ha));
 
             std::string constraintName = "Separation" + std::to_string(nSeparationConstraints);
-            if (criticalLink.cyclic)
-                model.addConstr(sumExpr, GRB_GREATER_EQUAL, 2.9, constraintName);
+            if (criticalLink.nFrom == criticalLink.nTo)
+                model.addConstr(sumExpr, GRB_GREATER_EQUAL, 3.0, constraintName);
             else
-                model.addConstr(sumExpr, GRB_GREATER_EQUAL, 0.9, constraintName);
+                model.addConstr(sumExpr, GRB_GREATER_EQUAL, 1.0, constraintName);
             nSeparationConstraints++;
+        }
+
+        // Additional code to avoid selfadjacency
+        {
+            for (CH b : mc.cells())
+            {
+                auto& dir2ps = mcMeshProps().ref<BLOCK_FACE_PATCHES>(b);
+                for (auto& kv : dir2ps)
+                {
+                    if (isNeg(kv.first))
+                        continue;
+
+                    UVWDir dir = kv.first;
+                    auto& ps = kv.second;
+                    auto& psOpp = dir2ps.at(-dir);
+                    set<CH> bs, bsOpp;
+                    for (FH p : ps)
+                    {
+                        HFH hp = mc.halfface_handle(p, 0);
+                        if (mc.incident_cell(hp) == b)
+                            hp = mc.opposite_halfface_handle(hp);
+                        CH bNext = mc.incident_cell(hp);
+                        if (!bNext.is_valid())
+                            continue;
+                        bs.insert(bNext);
+                    }
+                    for (FH p : psOpp)
+                    {
+                        HFH hp = mc.halfface_handle(p, 0);
+                        if (mc.incident_cell(hp) == b)
+                            hp = mc.opposite_halfface_handle(hp);
+                        CH bNext = mc.incident_cell(hp);
+                        if (!bNext.is_valid())
+                            continue;
+                        bsOpp.insert(bNext);
+                    }
+                    bool mustBeNonZero = bs.count(b) != 0 || bsOpp.count(b) != 0
+                                         || containsSomeOf(bs, bsOpp);
+                    if (mustBeNonZero)
+                    {
+                        // Constrain non-zero length along dir
+                        GRBLinExpr sumExpr = 0;
+                        auto& dir2as = mcMeshProps().ref<BLOCK_EDGE_ARCS>(b);
+                        for (EH a : dir2as.at(decompose(~(dir | -dir), DIM_2_DIRS)[0]))
+                            sumExpr += arc2var.at(a);
+                        std::string constraintName = "Selfadjacency" + std::to_string(nSeparationConstraints);
+                        model.addConstr(sumExpr, GRB_GREATER_EQUAL, 1.0, constraintName);
+                        nSeparationConstraints++;
+
+                        continue;
+                    }
+                }
+            }
         }
 
         int iter = 0;
@@ -201,23 +226,23 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 LOG(ERROR) << "Bad status return by GUROBI solver";
                 return SOLVER_ERROR;
             }
-            _mcMeshProps.allocate<ARC_INT_LENGTH>();
-            for (auto arc : mc.edges())
+            mcMeshProps().allocate<ARC_INT_LENGTH>();
+            for (EH arc : mc.edges())
             {
                 auto& grbvar = arc2var.at(arc);
-                _mcMeshProps.set<ARC_INT_LENGTH>(arc, (int)std::round(grbvar.get(GRB_DoubleAttr_X)));
+                mcMeshProps().set<ARC_INT_LENGTH>(arc, (int)std::round(grbvar.get(GRB_DoubleAttr_X)));
             }
 
             int minArcLength = 10000;
-            for (auto a : mc.edges())
-                minArcLength = std::min(minArcLength, _mcMeshPropsC.get<ARC_INT_LENGTH>(a));
+            for (EH a : mc.edges())
+                minArcLength = std::min(minArcLength, mcMeshProps().get<ARC_INT_LENGTH>(a));
             DLOG(INFO) << "Min quantized arc length " << minArcLength;
 
             for (auto& criticalLink : criticalLinks)
             {
                 criticalLink.length = 0;
-                for (auto ha : criticalLink.pathHas)
-                    criticalLink.length += _mcMeshPropsC.get<ARC_INT_LENGTH>(_mcMeshProps.mesh.edge_handle(ha));
+                for (HEH ha : criticalLink.pathHas)
+                    criticalLink.length += mcMeshProps().get<ARC_INT_LENGTH>(mcMeshProps().mesh().edge_handle(ha));
             }
 
             if (!allowZero)
@@ -229,27 +254,27 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 vector<bool> isCriticalPatch(mc.n_faces(), false);
                 for (auto& kv : a2criticalLinkIdx)
                     isCriticalArc[kv.first.idx()] = true;
-                for (auto n : mc.vertices())
+                for (VH n : mc.vertices())
                 {
-                    auto type = nodeType(n);
+                    auto type = mcMeshProps().nodeType(n);
                     if (type.first == SingularNodeType::SINGULAR || type.second == FeatureNodeType::FEATURE
                         || type.second == FeatureNodeType::SEMI_FEATURE_SINGULAR_BRANCH)
                         isCriticalNode[n.idx()] = true;
                 }
-                for (auto p : mc.faces())
+                for (FH p : mc.faces())
                     isCriticalPatch[p.idx()]
                         = mc.is_boundary(p)
-                          || (_mcMeshPropsC.isAllocated<IS_FEATURE_F>() && _mcMeshPropsC.get<IS_FEATURE_F>(p));
+                          || (mcMeshProps().isAllocated<IS_FEATURE_F>() && mcMeshProps().get<IS_FEATURE_F>(p));
 
-                vector<vector<std::pair<int, OVM::EdgeHandle>>> forcedNonZeroSum;
+                vector<vector<pair<int, EH>>> forcedNonZeroSum;
                 findSeparationViolatingPaths(
                     criticalLinks, isCriticalArc, isCriticalNode, isCriticalPatch, forcedNonZeroSum);
                 validSolution = forcedNonZeroSum.size() == 0;
                 for (auto& aColl : forcedNonZeroSum)
                 {
                     assert(!aColl.empty());
-                    std::vector<GRBVar> vars;
-                    std::vector<double> coeff;
+                    vector<GRBVar> vars;
+                    vector<double> coeff;
                     for (auto sign2a : aColl)
                     {
                         vars.push_back(arc2var.at(sign2a.second));
@@ -270,8 +295,8 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
             }
         }
         int minArcLength = 10000;
-        for (auto a : mc.edges())
-            minArcLength = std::min(minArcLength, _mcMeshPropsC.get<ARC_INT_LENGTH>(a));
+        for (EH a : mc.edges())
+            minArcLength = std::min(minArcLength, mcMeshProps().get<ARC_INT_LENGTH>(a));
         int nHexes = numHexesInQuantization();
         LOG(INFO) << "Quantized MC, nHexes: " << nHexes << ", objective: " << model.getObjective().getValue()
                   << ", iterations: " << iter << ", minArcLength " << minArcLength;
@@ -288,16 +313,18 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
 
 int MCQuantizer::numHexesInQuantization() const
 {
-    const MCMesh& mc = _mcMeshProps.mesh;
+    const MCMesh& mc = mcMeshProps().mesh();
     int nHexes = 0;
-    for (auto b : mc.cells())
+    for (CH b : mc.cells())
     {
         int nBlockHexes = 1;
-        for (auto dir : {UVWDir::NEG_U_NEG_V, UVWDir::NEG_U_NEG_W, UVWDir::NEG_V_NEG_W})
+        for (UVWDir dir : {UVWDir::NEG_U_NEG_V, UVWDir::NEG_U_NEG_W, UVWDir::NEG_V_NEG_W})
         {
             int arcLen = 0;
-            for (auto a : _mcMeshPropsC.ref<BLOCK_EDGE_ARCS>(b).at(dir))
-                arcLen += _mcMeshPropsC.get<ARC_INT_LENGTH>(a);
+            // WARNING this way of using range based for loop (chaining 2 function calls)
+            // depends on the first calls not returning rvalues!
+            for (EH a : mcMeshProps().ref<BLOCK_EDGE_ARCS>(b).at(dir))
+                arcLen += mcMeshProps().get<ARC_INT_LENGTH>(a);
             nBlockHexes *= arcLen;
         }
         nHexes += nBlockHexes;
@@ -305,12 +332,11 @@ int MCQuantizer::numHexesInQuantization() const
     return nHexes;
 }
 
-MCQuantizer::RetCode
-MCQuantizer::findSeparationViolatingPaths(const vector<CriticalLink>& criticalLinks,
-                                          const vector<bool>& arcIsCritical,
-                                          const vector<bool>& nodeIsCritical,
-                                          const vector<bool>& patchIsCritical,
-                                          vector<vector<std::pair<int, OVM::EdgeHandle>>>& nonZeroSumArcs) const
+MCQuantizer::RetCode MCQuantizer::findSeparationViolatingPaths(const vector<CriticalLink>& criticalLinks,
+                                                               const vector<bool>& arcIsCritical,
+                                                               const vector<bool>& nodeIsCritical,
+                                                               const vector<bool>& patchIsCritical,
+                                                               vector<vector<pair<int, EH>>>& nonZeroSumArcs) const
 {
     nonZeroSumArcs.clear();
 
@@ -326,44 +352,42 @@ MCQuantizer::findSeparationViolatingPaths(const vector<CriticalLink>& criticalLi
     return SUCCESS;
 }
 
-MCQuantizer::RetCode
-MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
-                               const vector<bool>& arcIsCritical,
-                               const vector<bool>& nodeIsCritical,
-                               const vector<bool>& patchIsCritical,
-                               vector<vector<std::pair<int, OVM::EdgeHandle>>>& nonZeroSumArcs) const
+MCQuantizer::RetCode MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
+                                                    const vector<bool>& arcIsCritical,
+                                                    const vector<bool>& nodeIsCritical,
+                                                    const vector<bool>& patchIsCritical,
+                                                    vector<vector<pair<int, EH>>>& nonZeroSumArcs) const
 {
-    const MCMesh& mcMesh = _mcMeshProps.mesh;
+    const MCMesh& mcMesh = mcMeshProps().mesh();
 
-    auto criticalStartHa = criticalLink1.pathHas.empty() ? OVM::HalfEdgeHandle() : criticalLink1.pathHas.front();
+    HEH criticalStartHa = criticalLink1.pathHas.empty() ? HEH() : criticalLink1.pathHas.front();
 
-    vector<vector<OVM::HalfEdgeHandle>> dir2has;
-    map<OVM::HalfEdgeHandle, int> haOrth2dir;
+    vector<vector<HEH>> dir2has;
+    map<HEH, int> haOrth2dir;
     if (criticalStartHa.is_valid())
     {
-        // Categorize all vertical halfarcs by direction
-        for (auto criticalStartHp : mcMesh.halfedge_halffaces(criticalStartHa))
+        // Categorize all vertical has by direction
+        for (HFH criticalStartHp : mcMesh.halfedge_halffaces(criticalStartHa))
         {
             dir2has.emplace_back();
 
             auto& has = dir2has.back();
 
-            auto bRef = mcMesh.incident_cell(criticalStartHp);
+            CH bRef = mcMesh.incident_cell(criticalStartHp);
             if (!bRef.is_valid())
                 bRef = mcMesh.incident_cell(mcMesh.opposite_halfface_handle(criticalStartHp));
 
-            auto dirStart = halfarcDirInBlock(criticalStartHa, bRef);
+            UVWDir dirStart = halfarcDirInBlock(criticalStartHa, bRef);
 
-            auto haOrth = mcMesh.prev_halfedge_in_halfface(criticalStartHa, criticalStartHp);
+            HEH haOrth = mcMesh.prev_halfedge_in_halfface(criticalStartHa, criticalStartHp);
             while (halfarcDirInBlock(haOrth, bRef) == dirStart)
                 haOrth = mcMesh.prev_halfedge_in_halfface(haOrth, criticalStartHp);
             haOrth = mcMesh.opposite_halfedge_handle(haOrth);
             has.emplace_back(haOrth);
 
-            auto haCurr = criticalStartHa;
-            auto hpCurr = criticalStartHp;
+            HEH haCurr = criticalStartHa;
+            HFH hpCurr = criticalStartHp;
 
-            bool foundNext = true;
             do
             {
                 bRef = mcMesh.incident_cell(hpCurr);
@@ -372,47 +396,44 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
 
                 dirStart = halfarcDirInBlock(haCurr, bRef);
 
+                while (halfarcDirInBlock(mcMesh.next_halfedge_in_halfface(haCurr, hpCurr), bRef) == dirStart)
+                    haCurr = mcMesh.next_halfedge_in_halfface(haCurr, hpCurr);
                 haOrth = mcMesh.next_halfedge_in_halfface(haCurr, hpCurr);
-                while (halfarcDirInBlock(haOrth, bRef) == dirStart)
-                    haOrth = mcMesh.next_halfedge_in_halfface(haOrth, hpCurr);
+                if (haOrth == has.front())
+                    break;
                 has.emplace_back(haOrth);
 
-                foundNext = false;
-                auto haOrthOpp = mcMesh.opposite_halfedge_handle(haOrth);
-                for (auto hpNext : mcMesh.halfedge_halffaces(haOrthOpp))
-                {
-                    if (mcMesh.opposite_halfface_handle(hpNext) == hpCurr)
-                        continue;
-                    auto haNext = mcMesh.next_halfedge_in_halfface(haOrthOpp, hpNext);
-                    if (arcIsCritical[mcMesh.edge_handle(haNext).idx()]
-                        && !nodeIsCritical[mcMesh.from_vertex_handle(haNext).idx()]
-                        && mcMesh.from_vertex_handle(haNext) == mcMesh.to_vertex_handle(haCurr))
-                    {
-                        haCurr = haNext;
-                        hpCurr = hpNext;
-                        foundNext = true;
-                        break;
-                    }
-                }
-            } while (foundNext && haCurr != criticalStartHa);
+                HEH haOrthOpp = mcMesh.opposite_halfedge_handle(haOrth);
+                hpCurr = findMatching(mcMesh.halfedge_halffaces(haOrthOpp),
+                                      [&](const HFH& hpNext)
+                                      {
+                                          return mcMesh.face_handle(hpNext) != mcMesh.face_handle(hpCurr)
+                                                 && std::find(criticalLink1.pathHas.begin(),
+                                                              criticalLink1.pathHas.end(),
+                                                              mcMesh.next_halfedge_in_halfface(haOrthOpp, hpNext))
+                                                        != criticalLink1.pathHas.end();
+                                      });
+                if (hpCurr.is_valid())
+                    haCurr = mcMesh.next_halfedge_in_halfface(haOrthOpp, hpCurr);
+            } while (hpCurr.is_valid() && haCurr != criticalStartHa);
         }
         for (int i = 0; i < (int)dir2has.size(); i++)
-            for (auto ha : dir2has[i])
+            for (HEH ha : dir2has[i])
                 haOrth2dir[ha] = i;
     }
     else
     {
-        for (auto ha : mcMesh.outgoing_halfedges(criticalLink1.nFrom))
+        for (HEH ha : mcMesh.outgoing_halfedges(criticalLink1.nFrom))
             dir2has.push_back({ha});
         for (int i = 0; i < (int)dir2has.size(); i++)
-            for (auto ha : dir2has[i])
+            for (HEH ha : dir2has[i])
                 haOrth2dir[ha] = i;
     }
 
-    auto criticalStartN = criticalLink1.nFrom;
-    auto bRefStart
+    VH criticalStartN = criticalLink1.nFrom;
+    CH bRefStart
         = criticalStartHa.is_valid() ? *mcMesh.hec_iter(criticalStartHa) : *mcMesh.vc_iter(criticalLink1.nFrom);
-    auto dirStartHa = criticalStartHa.is_valid() ? halfarcDirInBlock(criticalStartHa, bRefStart) : UVWDir::NONE;
+    UVWDir dirStartHa = criticalStartHa.is_valid() ? halfarcDirInBlock(criticalStartHa, bRefStart) : UVWDir::NONE;
 
     WeaklyMonotonousPath pStart;
     pStart.branchedOff = false;
@@ -440,81 +461,67 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
 
     for (int dirIdx = 0; dirIdx < (int)dir2has.size(); dirIdx++)
     {
-        // vector<UVWDir> nsVisitedByDirs(mcMesh.n_vertices(), UVWDir::NONE);
         vector<bool> nsVisited(mcMesh.n_vertices(), false);
         vector<bool> nsInitialized(mcMesh.n_vertices(), false);
         PathQueue pathQ;
         pathQ.push(pStart);
         while (!pathQ.empty())
         {
-            auto currentP = pathQ.top();
+            auto pathCurrent = pathQ.top();
             pathQ.pop();
 
-            // if ((~nsVisitedByDirs[currentP.n.idx()] & currentP.monotonousDirs) == UVWDir::NONE)
-            //     continue;
-            // nsVisitedByDirs[currentP.n.idx()] = nsVisitedByDirs[currentP.n.idx()] | currentP.monotonousDirs;
-
-            if ((currentP.branchedOff && nsVisited[currentP.n.idx()])
-                || (!currentP.branchedOff && nsInitialized[currentP.n.idx()]))
+            if ((pathCurrent.branchedOff && nsVisited[pathCurrent.n.idx()])
+                || (!pathCurrent.branchedOff && nsInitialized[pathCurrent.n.idx()]))
                 continue;
-            if (currentP.branchedOff)
-                nsVisited[currentP.n.idx()] = true;
+            if (pathCurrent.branchedOff)
+                nsVisited[pathCurrent.n.idx()] = true;
             else
-                nsInitialized[currentP.n.idx()] = true;
+                nsInitialized[pathCurrent.n.idx()] = true;
 
-            map<OVM::CellHandle, Transition> b2trans;
-            map<OVM::HalfEdgeHandle, vector<OVM::CellHandle>> ha2bRef;
-            determineNextHalfedges(currentP, b2trans, ha2bRef);
+            map<CH, Transition> b2trans;
+            map<HEH, vector<CH>> ha2bRef;
+            determineNextHalfedges(pathCurrent, b2trans, ha2bRef);
 
             // Check for separation violations by current path
-            if ((currentP.walkedDirs & currentP.monotonousDirs) != UVWDir::NONE)
+            if ((pathCurrent.walkedDirs & pathCurrent.monotonousDirs) != UVWDir::NONE)
             {
                 UVWDir violationDir = UVWDir::NONE;
                 // Check whether startinterval-criticalnode pairs overlap
-                if (nodeIsCritical[currentP.n.idx()])
-                {
-                    int nDimFullOverlap = 0;
-                    if (bboxOverlap(
-                            currentP.deltaMin, currentP.deltaMax, currentP.delta, currentP.delta, nDimFullOverlap))
-                    {
-                        violationDir = currentP.walkedDirs & ~currentP.dirs1;
-                        assert(violationDir != UVWDir::NONE);
-                    }
-                }
+                if (nodeIsCritical[pathCurrent.n.idx()]
+                    && bboxOverlap(pathCurrent.deltaMin, pathCurrent.deltaMax, pathCurrent.delta, pathCurrent.delta))
+                    violationDir = pathCurrent.walkedDirs & ~pathCurrent.dirs1;
 
                 if (violationDir == UVWDir::NONE)
                 {
                     // Check whether startinterval-criticallink pairs overlap
                     for (const auto& kv : ha2bRef)
                     {
-                        auto ha2 = kv.first;
-                        auto a2 = mcMesh.edge_handle(ha2);
+                        HEH ha2 = kv.first;
+                        EH a2 = mcMesh.edge_handle(ha2);
                         if (arcIsCritical[a2.idx()])
                         {
-                            auto bRef2 = kv.second.front();
-                            auto trans2 = b2trans.at(bRef2);
+                            CH bRef2 = kv.second.front();
+                            Transition trans2 = b2trans.at(bRef2);
 
-                            auto dir2 = trans2.invert().rotate(halfarcDirInBlock(ha2, bRef2));
+                            UVWDir dir2 = trans2.invert().rotate(halfarcDirInBlock(ha2, bRef2));
 
-                            auto possibleViolationDir = currentP.walkedDirs & ~(dir2 | -dir2) & ~currentP.dirs1;
-                            if ((possibleViolationDir & currentP.monotonousDirs) == UVWDir::NONE)
+                            UVWDir possibleViolationDir = pathCurrent.walkedDirs & ~(dir2 | -dir2) & ~pathCurrent.dirs1;
+                            if ((possibleViolationDir & pathCurrent.monotonousDirs) == UVWDir::NONE)
                                 continue;
 
                             // Measure just overlap with the arc, not the link
-                            int length = _mcMeshPropsC.get<ARC_INT_LENGTH>(a2);
+                            int length = mcMeshProps().get<ARC_INT_LENGTH>(a2);
 
                             if (length < 0)
                             {
                                 length = -length;
                                 dir2 = -dir2;
                             }
-                            Vec3i deltaMin2 = currentP.delta + (isNeg(dir2) ? length * toVec(dir2) : Vec3i(0, 0, 0));
-                            Vec3i deltaMax2 = currentP.delta + (isNeg(dir2) ? Vec3i(0, 0, 0) : length * toVec(dir2));
+                            Vec3i deltaMin2 = pathCurrent.delta + (isNeg(dir2) ? length * toVec(dir2) : Vec3i(0, 0, 0));
+                            Vec3i deltaMax2 = pathCurrent.delta + (isNeg(dir2) ? Vec3i(0, 0, 0) : length * toVec(dir2));
 
                             // Check for overlap
-                            int nDimFullOverlap = 0;
-                            if (bboxOverlap(
-                                    currentP.deltaMin, currentP.deltaMax, deltaMin2, deltaMax2, nDimFullOverlap))
+                            if (bboxOverlap(pathCurrent.deltaMin, pathCurrent.deltaMax, deltaMin2, deltaMax2))
                             {
                                 assert(possibleViolationDir != UVWDir::NONE);
                                 violationDir = possibleViolationDir;
@@ -527,29 +534,29 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
                 if (violationDir == UVWDir::NONE)
                 {
                     // Check for overlaps between startinterval-surfacepatch pairs
-                    for (auto hp2 : mcMesh.vertex_halffaces(currentP.n))
+                    for (HFH hp2 : mcMesh.vertex_halffaces(pathCurrent.n))
                     {
                         if (patchIsCritical[mcMesh.face_handle(hp2).idx()])
                         {
-                            auto hp2opp = mcMesh.opposite_halfface_handle(hp2);
-                            auto bRef2 = mcMesh.incident_cell(hp2opp);
+                            HFH hp2opp = mcMesh.opposite_halfface_handle(hp2);
+                            CH bRef2 = mcMesh.incident_cell(hp2opp);
 
                             if (b2trans.find(bRef2) == b2trans.end())
                                 continue;
-                            auto trans2 = b2trans.at(bRef2);
+                            Transition trans2 = b2trans.at(bRef2);
 
-                            auto hpDirs = UVWDir::NONE;
-                            for (auto ha : mcMesh.halfface_halfedges(hp2opp))
+                            UVWDir hpDirs = UVWDir::NONE;
+                            for (HEH ha : mcMesh.halfface_halfedges(hp2opp))
                                 hpDirs = hpDirs | halfarcDirInBlock(ha, bRef2);
 
-                            auto hpDirsLocal = trans2.invert().rotate(hpDirs);
+                            UVWDir hpDirsLocal = trans2.invert().rotate(hpDirs);
                             assert(dim(hpDirsLocal) == 2);
 
-                            auto possibleViolationDir = currentP.walkedDirs & ~hpDirsLocal & ~currentP.dirs1;
-                            if ((possibleViolationDir & currentP.monotonousDirs) == UVWDir::NONE)
+                            UVWDir possibleViolationDir = pathCurrent.walkedDirs & ~hpDirsLocal & ~pathCurrent.dirs1;
+                            if ((possibleViolationDir & pathCurrent.monotonousDirs) == UVWDir::NONE)
                                 continue;
 
-                            if (checkPatchOverlap(currentP, hp2opp, trans2))
+                            if (checkPatchOverlap(pathCurrent, hp2opp, trans2))
                             {
                                 assert(possibleViolationDir != UVWDir::NONE);
                                 violationDir = possibleViolationDir;
@@ -561,26 +568,26 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
 
                 if (violationDir != UVWDir::NONE)
                 {
-                    vector<OVM::EdgeHandle> posSignArcs;
-                    vector<OVM::EdgeHandle> negSignArcs;
-                    for (auto dim1dirPos : {UVWDir::POS_U, UVWDir::POS_V, UVWDir::POS_W})
+                    vector<EH> posSignArcs;
+                    vector<EH> negSignArcs;
+                    for (UVWDir dim1dirPos : {UVWDir::POS_U, UVWDir::POS_V, UVWDir::POS_W})
                     {
-                        auto dim1dirAny = dim1dirPos | -dim1dirPos;
-                        auto intersection = violationDir & dim1dirAny;
+                        UVWDir dim1dirAny = dim1dirPos | -dim1dirPos;
+                        UVWDir intersection = violationDir & dim1dirAny;
                         if (intersection != UVWDir::NONE)
                         {
                             if (intersection == dim1dirAny)
                             {
-                                const auto& posArcs = currentP.dir2walkedArcs.at(dim1dirPos);
-                                const auto& negArcs = currentP.dir2walkedArcs.at(-dim1dirPos);
+                                const auto& posArcs = pathCurrent.dir2walkedArcs.at(dim1dirPos);
+                                const auto& negArcs = pathCurrent.dir2walkedArcs.at(-dim1dirPos);
                                 assert(posArcs.size() > 0);
                                 assert(negArcs.size() > 0);
                                 double lengthPos = 0;
                                 double lengthNeg = 0;
-                                for (auto a : posArcs)
-                                    lengthPos += _mcMeshPropsC.get<ARC_DBL_LENGTH>(a);
-                                for (auto a : negArcs)
-                                    lengthNeg += _mcMeshPropsC.get<ARC_DBL_LENGTH>(a);
+                                for (EH a : posArcs)
+                                    lengthPos += mcMeshProps().get<ARC_DBL_LENGTH>(a);
+                                for (EH a : negArcs)
+                                    lengthNeg += mcMeshProps().get<ARC_DBL_LENGTH>(a);
                                 if (lengthPos > lengthNeg)
                                 {
                                     posSignArcs.insert(posSignArcs.end(), posArcs.begin(), posArcs.end());
@@ -594,7 +601,7 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
                             }
                             else
                             {
-                                auto& arcs = currentP.dir2walkedArcs.at(intersection);
+                                auto& arcs = pathCurrent.dir2walkedArcs.at(intersection);
                                 posSignArcs.insert(posSignArcs.end(), arcs.begin(), arcs.end());
                             }
                         }
@@ -604,39 +611,36 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
                         continue;
                     nonZeroSumArcs.emplace_back();
                     auto& nonZeroSum = nonZeroSumArcs.back();
-                    for (auto a : posSignArcs)
+                    for (EH a : posSignArcs)
                         nonZeroSum.push_back({1, a});
-                    for (auto a : negSignArcs)
+                    for (EH a : negSignArcs)
                         nonZeroSum.push_back({-1, a});
 
-                    assert(currentP.branchedOff);
+                    assert(pathCurrent.branchedOff);
                     break;
                 }
             }
 
             for (const auto& kv : ha2bRef)
             {
-                auto ha = kv.first;
-                auto nTo = mcMesh.to_vertex_handle(ha);
-                if (currentP.branchedOff && nsVisited[nTo.idx()])
+                HEH ha = kv.first;
+                VH nTo = mcMesh.to_vertex_handle(ha);
+                if (pathCurrent.branchedOff && nsVisited[nTo.idx()])
                     continue;
-                // if ((~nsVisitedByDirs[nTo.idx()] & currentP.monotonousDirs) == UVWDir::NONE)
-                //     continue;
 
-                for (auto bRef : kv.second)
+                for (CH bRef : kv.second)
                 {
                     auto& trans = b2trans.at(bRef);
-                    WeaklyMonotonousPath nextP = currentP;
+                    WeaklyMonotonousPath nextP = pathCurrent;
                     nextP.bRefCurrent = bRef;
                     nextP.transCurrent = trans;
 
-                    if (!checkP0Containment(currentP))
+                    if (!checkP0Containment(nextP))
                         continue;
 
                     nextP.n = nTo;
-                    nextP.path.emplace_back(ha);
 
-                    auto walkedDir = trans.invert().rotate(halfarcDirInBlock(ha, nextP.bRefCurrent));
+                    UVWDir walkedDir = trans.invert().rotate(halfarcDirInBlock(ha, nextP.bRefCurrent));
 
                     // Record branch-off from link, allow only limited set of edges
                     if (!nextP.branchedOff)
@@ -656,8 +660,10 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
                             continue;
                         }
                     }
+                    if (nextP.branchedOff)
+                        nextP.path.emplace_back(ha);
 
-                    nextP.delta += _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha)) * toVec(walkedDir);
+                    nextP.delta += mcMeshProps().get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha)) * toVec(walkedDir);
 
                     nextP.walkedDirs = nextP.walkedDirs | walkedDir;
                     nextP.monotonousDirs = nextP.monotonousDirs & ~(-walkedDir);
@@ -671,7 +677,7 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
                     // Walk along the link for free, but other arcs accumulate distance
                     // if (nextP.branchedOff)
                     if ((walkedDir & nextP.dirs1) == UVWDir::NONE)
-                        nextP.length += _mcMeshPropsC.get<ARC_DBL_LENGTH>(mcMesh.edge_handle(ha));
+                        nextP.length += mcMeshProps().get<ARC_DBL_LENGTH>(mcMesh.edge_handle(ha));
 
                     pathQ.push(nextP);
                     break; // Only push the edge once (still need to check each bRef)
@@ -682,8 +688,7 @@ MCQuantizer::traceExhaustPaths(const CriticalLink& criticalLink1,
     return SUCCESS;
 }
 
-bool MCQuantizer::bboxOverlap(
-    const Vec3i& min1, const Vec3i& max1, const Vec3i& min2, const Vec3i& max2, int& nDimFullOverlap)
+bool MCQuantizer::bboxOverlap(const Vec3i& min1, const Vec3i& max1, const Vec3i& min2, const Vec3i& max2)
 {
     int coordTouchingOrOverlaps = 0;
     for (int i = 0; i < 3; i++)
@@ -698,56 +703,41 @@ bool MCQuantizer::bboxOverlap(
 
         if (coordTouchingOrOverlaps == i)
             return false;
-
-        // min2[i] is in (min1[i], max1[i])
-        // OR max2[i] is in (min1[i], max1[i])
-        // OR min1[i] is in (min2[i], max2[i])
-        // OR max1[i] is in (min2[i], max2[i])
-        nDimFullOverlap += (min1[i] < min2[i] && min2[i] < max1[i]) || (min1[i] < max2[i] && max2[i] < max1[i])
-                           || (min2[i] < min1[i] && min1[i] < max2[i]) || (min2[i] < max1[i] && max1[i] < max2[i]);
     }
 
     return true;
 }
 
-MCQuantizer::RetCode
-MCQuantizer::determineNextHalfedges(const WeaklyMonotonousPath& currentP,
-                                    map<OVM::CellHandle, Transition>& b2trans,
-                                    map<OVM::HalfEdgeHandle, vector<OVM::CellHandle>>& ha2bRef) const
+MCQuantizer::RetCode MCQuantizer::determineNextHalfedges(const WeaklyMonotonousPath& pathCurrent,
+                                                         map<CH, Transition>& b2trans,
+                                                         map<HEH, vector<CH>>& ha2bRef) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
 
-    b2trans = map<OVM::CellHandle, Transition>({{currentP.bRefCurrent, {currentP.transCurrent}}});
+    b2trans = map<CH, Transition>({{pathCurrent.bRefCurrent, {pathCurrent.transCurrent}}});
 
     // Floodfill blocks around n, storing current transition for each expanded block
-    list<std::pair<OVM::CellHandle, Transition>> bQ({{currentP.bRefCurrent, currentP.transCurrent}});
+    list<pair<CH, Transition>> bQ({{pathCurrent.bRefCurrent, pathCurrent.transCurrent}});
 
     while (!bQ.empty())
     {
         auto b2t = bQ.front();
         bQ.pop_front();
 
-        for (auto hp : mcMesh.cell_halffaces(b2t.first))
+        for (HFH hp : mcMesh.cell_halffaces(b2t.first))
         {
-            auto hpOpp = mcMesh.opposite_halfface_handle(hp);
-            auto bNext = mcMesh.incident_cell(hpOpp);
+            HFH hpOpp = mcMesh.opposite_halfface_handle(hp);
+            CH bNext = mcMesh.incident_cell(hpOpp);
             if (!bNext.is_valid() || b2trans.find(bNext) != b2trans.end())
                 continue;
-            bool hasN = false;
-            for (auto n2 : mcMesh.halfface_vertices(hp))
-                if (n2 == currentP.n)
-                {
-                    hasN = true;
-                    break;
-                }
-            if (!hasN)
+            if (!contains(mcMesh.halfface_vertices(hp), pathCurrent.n))
                 continue;
 
             // Check if overlapping with current path
-            if (!checkPatchOverlap(currentP, hp, b2t.second))
+            if (!checkPatchOverlap(pathCurrent, hp, b2t.second))
                 continue;
 
-            auto trans = b2t.second.chain(_mcMeshPropsC.hpTransition(hp));
+            Transition trans = b2t.second.chain(mcMeshProps().hpTransition<PATCH_TRANSITION>(hp));
 
             bool exists = b2trans.find(bNext) != b2trans.end();
             if (exists)
@@ -758,11 +748,11 @@ MCQuantizer::determineNextHalfedges(const WeaklyMonotonousPath& currentP,
         }
     }
     ha2bRef.clear();
-    for (auto ha : mcMesh.outgoing_halfedges(currentP.n))
+    for (HEH ha : mcMesh.outgoing_halfedges(pathCurrent.n))
     {
-        if (!currentP.path.empty() && currentP.path.back() == mcMesh.opposite_halfedge_handle(ha))
+        if (!pathCurrent.path.empty() && pathCurrent.path.back() == mcMesh.opposite_halfedge_handle(ha))
             continue;
-        for (auto b : mcMesh.halfedge_cells(ha))
+        for (CH b : mcMesh.halfedge_cells(ha))
         {
             auto it = b2trans.find(b);
             if (it != b2trans.end())
@@ -774,53 +764,47 @@ MCQuantizer::determineNextHalfedges(const WeaklyMonotonousPath& currentP,
     return SUCCESS;
 }
 
-bool MCQuantizer::checkArcOverlap(const WeaklyMonotonousPath& currentP,
-                                  const OVM::HalfEdgeHandle& ha,
-                                  const OVM::CellHandle& bRef,
+bool MCQuantizer::checkArcOverlap(const WeaklyMonotonousPath& pathCurrent,
+                                  const HEH& ha,
+                                  const CH& bRef,
                                   const Transition& trans) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
 
-    auto dir2 = trans.invert().rotate(halfarcDirInBlock(ha, bRef));
-    int arcLen = _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
+    UVWDir dir2 = trans.invert().rotate(halfarcDirInBlock(ha, bRef));
+    int arcLen = mcMeshProps().get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
 
-    Vec3i deltaMin2 = isNeg(dir2) ? currentP.delta + arcLen * toVec(dir2) : currentP.delta;
-    Vec3i deltaMax2 = isNeg(dir2) ? currentP.delta : currentP.delta + arcLen * toVec(dir2);
+    Vec3i deltaMin2 = isNeg(dir2) ? pathCurrent.delta + arcLen * toVec(dir2) : pathCurrent.delta;
+    Vec3i deltaMax2 = isNeg(dir2) ? pathCurrent.delta : pathCurrent.delta + arcLen * toVec(dir2);
 
     // Check for overlap
-    int nDimFullOverlap = 0;
-    return bboxOverlap(currentP.deltaMin, currentP.deltaMax, deltaMin2, deltaMax2, nDimFullOverlap);
+    return bboxOverlap(pathCurrent.deltaMin, pathCurrent.deltaMax, deltaMin2, deltaMax2);
 }
 
-bool MCQuantizer::checkPatchOverlap(const WeaklyMonotonousPath& currentP,
-                                    const OVM::HalfFaceHandle& hp,
+bool MCQuantizer::checkPatchOverlap(const WeaklyMonotonousPath& pathCurrent,
+                                    const HFH& hp,
                                     const Transition& trans) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
 
-    auto bRef2 = mcMesh.incident_cell(hp);
+    CH bRef2 = mcMesh.incident_cell(hp);
 
-    Vec3i deltaMin2 = currentP.delta;
-    Vec3i deltaMax2 = currentP.delta;
+    Vec3i deltaMin2 = pathCurrent.delta;
+    Vec3i deltaMax2 = pathCurrent.delta;
 
-    OVM::HalfEdgeHandle ha1;
-    for (auto haOther : mcMesh.halfface_halfedges(hp))
-        if (mcMesh.from_vertex_handle(haOther) == currentP.n)
-        {
-            ha1 = haOther;
-            break;
-        }
+    HEH ha1 = findMatching(mcMesh.halfface_halfedges(hp),
+                           [&](const HEH& ha) { return mcMesh.from_vertex_handle(ha) == pathCurrent.n; });
     assert(ha1.is_valid());
-    auto haCurr = ha1;
-    auto deltaCurr = currentP.delta;
+    HEH haCurr = ha1;
+    Vec3i deltaCurr = pathCurrent.delta;
 
-    auto transInv = trans.invert();
+    Transition transInv = trans.invert();
     do
     {
-        auto dir = transInv.rotate(halfarcDirInBlock(haCurr, bRef2));
-        auto aCurr = mcMesh.edge_handle(haCurr);
-        auto haLength = _mcMeshPropsC.get<ARC_INT_LENGTH>(aCurr);
-        deltaCurr += haLength * toVec(dir);
+        UVWDir dir = transInv.rotate(halfarcDirInBlock(haCurr, bRef2));
+        EH aCurr = mcMesh.edge_handle(haCurr);
+        int lengthHa = mcMeshProps().get<ARC_INT_LENGTH>(aCurr);
+        deltaCurr += lengthHa * toVec(dir);
         for (int coord = 0; coord < 3; coord++)
         {
             deltaMax2[coord] = std::max(deltaMax2[coord], deltaCurr[coord]);
@@ -829,35 +813,34 @@ bool MCQuantizer::checkPatchOverlap(const WeaklyMonotonousPath& currentP,
         haCurr = mcMesh.next_halfedge_in_halfface(haCurr, hp);
     } while (haCurr != ha1);
 
-    assert(deltaCurr == currentP.delta);
+    assert(deltaCurr == pathCurrent.delta);
     assert(deltaMin2[0] <= deltaMax2[0] && deltaMin2[1] <= deltaMax2[1] && deltaMin2[2] <= deltaMax2[2]);
 
-    int nDimFullOverlap = 0;
-    return bboxOverlap(currentP.deltaMin, currentP.deltaMax, deltaMin2, deltaMax2, nDimFullOverlap);
+    return bboxOverlap(pathCurrent.deltaMin, pathCurrent.deltaMax, deltaMin2, deltaMax2);
 }
 
-bool MCQuantizer::checkP0Containment(const WeaklyMonotonousPath& currentP) const
+bool MCQuantizer::checkP0Containment(const WeaklyMonotonousPath& pathCurrent) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
 
-    auto bRef = currentP.bRefCurrent;
+    CH bRef = pathCurrent.bRefCurrent;
 
     // Find the closest corner of bRef
 
     // Graph search
-    list<std::pair<OVM::VertexHandle, Vec3i>> nQ;
-    nQ.push_back({currentP.n, Vec3i(0, 0, 0)});
-    map<OVM::VertexHandle, Vec3i> n2displacement({{currentP.n, Vec3i(0, 0, 0)}});
+    list<pair<VH, Vec3i>> nQ;
+    nQ.push_back({pathCurrent.n, Vec3i(0, 0, 0)});
+    map<VH, Vec3i> n2displacement({{pathCurrent.n, Vec3i(0, 0, 0)}});
     while (!nQ.empty())
     {
-        auto n = nQ.front().first;
-        auto displacement = nQ.front().second;
+        VH n = nQ.front().first;
+        Vec3i displacement = nQ.front().second;
         nQ.pop_front();
 
-        for (auto ha : mcMesh.outgoing_halfedges(n))
+        for (HEH ha : mcMesh.outgoing_halfedges(n))
         {
             bool inBRef = false;
-            for (auto b : mcMesh.halfedge_cells(ha))
+            for (CH b : mcMesh.halfedge_cells(ha))
                 if (b == bRef)
                 {
                     inBRef = true;
@@ -865,12 +848,12 @@ bool MCQuantizer::checkP0Containment(const WeaklyMonotonousPath& currentP) const
                 }
             if (inBRef)
             {
-                auto nTo = mcMesh.to_vertex_handle(ha);
+                VH nTo = mcMesh.to_vertex_handle(ha);
                 if (n2displacement.find(nTo) == n2displacement.end())
                 {
-                    auto dirHa = halfarcDirInBlock(ha, bRef);
-                    auto length = _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
-                    auto newDisplacement = displacement + toVec(dirHa) * length;
+                    UVWDir dirHa = pathCurrent.transCurrent.invert().rotate(halfarcDirInBlock(ha, bRef));
+                    double length = mcMeshProps().get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
+                    Vec3i newDisplacement = displacement + toVec(dirHa) * length;
                     n2displacement[nTo] = newDisplacement;
                     nQ.push_back({nTo, newDisplacement});
                 }
@@ -878,16 +861,14 @@ bool MCQuantizer::checkP0Containment(const WeaklyMonotonousPath& currentP) const
         }
     }
 
-    auto& dir2n = _mcMeshPropsC.ref<BLOCK_CORNER_NODES>(bRef);
-    auto nMin = dir2n.at(UVWDir::NEG_U_NEG_V_NEG_W);
-    auto nMax = dir2n.at(UVWDir::POS_U_POS_V_POS_W);
+    auto& dir2n = mcMeshProps().ref<BLOCK_CORNER_NODES>(bRef);
+    VH nMin = dir2n.at(UVWDir::NEG_U_NEG_V_NEG_W);
+    VH nMax = dir2n.at(UVWDir::POS_U_POS_V_POS_W);
 
-    int dimFullOverlap = 0;
-    return bboxOverlap(currentP.deltaMin,
-                       currentP.deltaMax,
-                       currentP.delta + n2displacement.at(nMin),
-                       currentP.delta + n2displacement.at(nMax),
-                       dimFullOverlap);
+    return bboxOverlap(pathCurrent.deltaMin,
+                       pathCurrent.deltaMax,
+                       pathCurrent.delta + n2displacement.at(nMin),
+                       pathCurrent.delta + n2displacement.at(nMax));
 }
 
-} // namespace qgp3d
+} // namespace mc3d

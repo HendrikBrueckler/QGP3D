@@ -18,24 +18,24 @@ ConstraintWriter::RetCode ConstraintWriter::writeTetPathConstraints()
     auto ret = checkFile();
     if (ret != RetCode::SUCCESS)
         return ret;
-    ConstraintExtractor extr(_meshPropsC);
+    ConstraintExtractor extr(meshProps());
 
     auto haSequences = extr.getCriticalSkeletonArcs();
     auto tetPathConstraints = extr.getTetPathConstraints(haSequences);
 
     LOG(INFO) << "Writing " << tetPathConstraints.size() << " constraints to file " << _fileName;
 
-    auto& mcMeshProps = *_meshPropsC.get<MC_MESH_PROPS>();
+    auto& mcMeshProps = *meshProps().get<MC_MESH_PROPS>();
 
-    auto& mc = mcMeshProps.mesh;
+    auto& mc = mcMeshProps.mesh();
     int nHexes = 0;
-    for (auto b : mc.cells())
+    for (CH b : mc.cells())
     {
         int nBlockHexes = 1;
-        for (auto dir : {UVWDir::NEG_U_NEG_V, UVWDir::NEG_U_NEG_W, UVWDir::NEG_V_NEG_W})
+        for (UVWDir dir : {UVWDir::NEG_U_NEG_V, UVWDir::NEG_U_NEG_W, UVWDir::NEG_V_NEG_W})
         {
             int arcLen = 0;
-            for (auto a : mcMeshProps.ref<BLOCK_EDGE_ARCS>(b).at(dir))
+            for (EH a : mcMeshProps.ref<BLOCK_EDGE_ARCS>(b).at(dir))
                 arcLen += mcMeshProps.get<ARC_INT_LENGTH>(a);
             nBlockHexes *= arcLen;
         }

@@ -1,10 +1,9 @@
 #ifndef QGP3D_CONSTRAINTEXTRACTOR_HPP
 #define QGP3D_CONSTRAINTEXTRACTOR_HPP
 
-#include <MC3D/Mesh/MCMeshManipulator.hpp>
+#include "MC3D/Mesh/MCMeshManipulator.hpp"
 
 #include "QGP3D/PathConstraint.hpp"
-
 namespace qgp3d
 {
 using namespace mc3d;
@@ -17,10 +16,10 @@ class ConstraintExtractor : public MCMeshNavigator
   public:
     struct TetPathConstraint
     {
-        OVM::VertexHandle vFrom; // Path start vertex
-        OVM::VertexHandle vTo;   // Path end vertex
-        vector<OVM::CellHandle> pathOrigTets; // Halffaces traversed by path between start and end
-        Vec3i offset; // Integer offset between start and end in coordinate system of tetFrom
+        VH vFrom;                // Path start vertex
+        VH vTo;                  // Path end vertex
+        vector<CH> pathOrigTets; // Halffaces traversed by path between start and end
+        Vec3i offset;            // Integer offset between start and end in coordinate system of tetFrom
     };
 
     /**
@@ -36,9 +35,9 @@ class ConstraintExtractor : public MCMeshNavigator
      *        nodes. Pseudosingular nodes are virtual (fake) singular nodes inserted on cyclic singular
      *        links.
      *
-     * @return vector<vector<OVM::HalfEdgeHandle>> singularity arc skeleton segments
+     * @return vector<vector<HEH>> singularity arc skeleton segments
      */
-    vector<vector<OVM::HalfEdgeHandle>> getCriticalSkeletonArcs();
+    vector<vector<HEH>> getCriticalSkeletonArcs();
 
     /**
      * @brief From a set of connected arc segments together with an underlying quantization, generate
@@ -48,7 +47,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param paths IN: connected arc segments
      * @return vector<PathConstraint> constraints
      */
-    vector<TetPathConstraint> getTetPathConstraints(const vector<vector<OVM::HalfEdgeHandle>>& paths);
+    vector<TetPathConstraint> getTetPathConstraints(const vector<vector<HEH>>& paths);
 
     /**
      * @brief Get the cut surfaces, that cut the MC into a topological ball
@@ -56,7 +55,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param cutSurfaces OUT: manifold patch collections that together form the cut surface
      * @param p2cutSurface OUT: tagging of patches (patch idx => cut surface idx)
      */
-    void getCutSurfaces(vector<vector<OVM::FaceHandle>>& cutSurfaces, vector<int>& p2cutSurface);
+    void getCutSurfaces(vector<vector<FH>>& cutSurfaces, vector<int>& p2cutSurface);
 
   protected:
     /**
@@ -76,7 +75,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param a IN: arc
      * @return int number of cut surface patches incident on \p a
      */
-    int countCutPatches(const OVM::EdgeHandle& a) const;
+    int countCutPatches(const EH& a) const;
 
     /**
      * @brief Whether node is on an actual cut of the cut graph
@@ -85,7 +84,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @return true if on cut
      * @return false else
      */
-    bool isOnActualCut(const OVM::VertexHandle& n) const;
+    bool isInActualCut(const VH& n) const;
 
     /**
      * @brief Count number of skeleton arcs incident on node
@@ -93,7 +92,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param n IN: node
      * @return int number of skeleton arcs incident on \p n
      */
-    int countIncidentSkeletonArcs(const OVM::VertexHandle& n) const;
+    int countIncidentSkeletonArcs(const VH& n) const;
 
     /**
      * @brief Get a path from start node to any target node through block b.
@@ -102,17 +101,16 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param n IN: start node
      * @param nsTarget IN: target nodes
      * @param b IN: block
-     * @return list<OVM::HalfEdgeHandle> halfarcs connecting \p n to any of \p nsTarget
+     * @return list<HEH> halfarcs connecting \p n to any of \p nsTarget
      */
-    list<OVM::HalfEdgeHandle>
-    pathThroughBlock(const OVM::VertexHandle& n, const set<OVM::VertexHandle>& nsTarget, const OVM::CellHandle& b);
+    list<HEH> pathThroughBlock(const VH& n, const set<VH>& nsTarget, const CH& b) const;
 
     /**
      * @brief Get one cyclic halfarc path through each manifold piece of the cut surface.
      *
-     * @return vector<vector<OVM::HalfEdgeHandle>> cyclic halfarc paths
+     * @return vector<vector<HEH>> cyclic halfarc paths
      */
-    vector<vector<OVM::HalfEdgeHandle>> getCutSurfaceCycles();
+    vector<vector<HEH>> getCutSurfaceCycles();
 
     /**
      * @brief Path of tets connecting the current tet to any tet (including that tet) incident on a target halfedge
@@ -120,11 +118,9 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param tetStart IN: start tet
      * @param heTarget IN: target halfedge
      * @param vConn IN: pivot vertex
-     * @return list<OVM::CellHandle> tet path
+     * @return list<CH> tet path
      */
-    list<OVM::CellHandle> connectingTetPath(const OVM::CellHandle& tetStart,
-                                            const OVM::HalfEdgeHandle& heTarget,
-                                            const OVM::VertexHandle& vConn) const;
+    list<CH> connectingTetPath(const CH& tetStart, const HEH& heTarget, const VH& vConn) const;
 
     /**
      * @brief Path of tets connecting the current tet to any tet (including that tet) incident on a target halfface
@@ -132,11 +128,9 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param tetStart IN: start tet
      * @param hfTarget IN: target halfface
      * @param vConn IN: pivot vertex
-     * @return list<OVM::CellHandle>  tet path
+     * @return list<CH>  tet path
      */
-    list<OVM::CellHandle> connectingTetPath(const OVM::CellHandle& tetStart,
-                                            const OVM::HalfFaceHandle& hfTarget,
-                                            const OVM::VertexHandle& vConn) const;
+    list<CH> connectingTetPath(const CH& tetStart, const HFH& hfTarget, const VH& vConn) const;
 
     /**
      * @brief Get the accumulated transition along a path of tets
@@ -144,7 +138,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param path IN: tet path
      * @return Transition accumulated transition along path
      */
-    Transition transitionAlongPath(const list<OVM::CellHandle>& path) const;
+    Transition transitionAlongPath(const list<CH>& path) const;
 
     /**
      * @brief Snap the endpoints of the given path (which might be non-original")
@@ -155,13 +149,11 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param pathTets IN: tet sequence between previous path endpoints, OUT: tet sequence between new endpoints
      * @param e2parent IN: edge split hierarchy
      * @param f2parent IN: face split hierarchy
-     * @param tet2parent IN: tet split hierarchy
      */
     void determineEquivalentEndpoints(TetPathConstraint& path,
-                                      list<OVM::CellHandle>& pathTets,
-                                      const map<OVM::EdgeHandle, OVM::EdgeHandle>& e2parent,
-                                      const map<OVM::FaceHandle, OVM::FaceHandle>& f2parent,
-                                      const map<OVM::CellHandle, OVM::CellHandle>& tet2parent) const;
+                                      list<CH>& pathTets,
+                                      const map<EH, EH>& e2parent,
+                                      const map<FH, FH>& f2parent) const;
 
     /**
      * @brief Increment tet iterator until current element is incident on e
@@ -170,9 +162,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param itTet IN: iterator in tet sequence, OUT: (possibly incremented) iterator
      * @param transOrigCurr IN: current transition (in orig charts), OUT: updated transition
      */
-    void walkToMatchingTet(const OVM::EdgeHandle& e,
-                           list<OVM::CellHandle>::iterator& itTet,
-                           Transition& transOrigCurr) const;
+    void walkToMatchingTet(const EH& e, list<CH>::iterator& itTet, Transition& transOrigCurr) const;
 
     /**
      * @brief Get the coordinate index [0 u, 1 v, 2 w] of the direction in which a cyclic singularity
@@ -183,9 +173,7 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param transOrigCurr IN: current transition inside coord system of \p tetStart
      * @return int coordinate index
      */
-    int getCycleCoord(const OVM::CellHandle& tetStart,
-                      const OVM::VertexHandle& vConn,
-                      const Transition& transOrigCurr) const;
+    int getCycleCoord(const CH& tetStart, const VH& vConn, const Transition& transOrigCurr) const;
 
     /**
      * @brief Get the coordinate indices [0 u, 1 v, 2 w] of the directions in which a borderless
@@ -196,9 +184,31 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param transOrigCurr IN: current transition inside coord system of \p tetStart
      * @return std::pair<int, int> coordinate indices
      */
-    std::pair<int, int> getBoundaryCoords(const OVM::CellHandle& tetStart,
-                                          const OVM::VertexHandle& vConn,
-                                          const Transition& transOrigCurr) const;
+    std::pair<int, int> getBoundaryCoords(const CH& tetStart, const VH& vConn, const Transition& transOrigCurr) const;
+
+    /**
+     * @brief Build a dual spanning tree. Fails in case no leaf node exists.
+     *
+     * @param nRoot OUT: tree root
+     * @param bRoot OUT: tree root block
+     * @param cellTreePrecursor OUT: spanning tree encoded by precursor for each block
+     * @param cutSurfaceToAvoid IN: wether a cut surface has been precomputed and the root node should avoid that surface
+     * @return true if valid result
+     * @return false if failure
+     */
+    bool buildBlockSpanningTree(VH& nRoot, CH& bRoot, vector<CH>& cellTreePrecursor, int cutSurfaceToAvoid);
+
+    /**
+     * @brief Find a cycle of halfarcs passing through a given node \p nStart incident on a cut surface patch \p pStart .
+     *
+     * @param nStart IN: node on cut surface
+     * @param pStart IN: patch of cut surface
+     * @param nRoot IN: root node to use
+     * @param bRoot IN: root block to use
+     * @param cellTreePrecursor IN: spanning tree encoded by precursor for each block
+     * @return vector<HEH> ordered halfarc cycle
+     */
+    vector<HEH> cycleThroughCutSurface(const VH& nStart, const FH& pStart, const VH& nRoot, const CH& bRoot, const vector<CH>& cellTreePrecursor) const;
 
     /**
      * @brief Types of nodes marked as "singular"
@@ -211,17 +221,17 @@ class ConstraintExtractor : public MCMeshNavigator
         ARTIFICIAL_ON_BOUNDARY
     };
 
-    OVM::VertexHandle _nRoot; // Root node of dual MC spanning tree
-    OVM::CellHandle _bRoot; // Root block of dual MC spanning tree
-    vector<OVM::CellHandle> _cellTreePrecursor; // Precursor in dual spanning tree
-    vector<bool> _isSkeletonArc; // whether a given arc is part of the constraint skeleton
-    vector<bool> _isCutPatch; // whether a given patch is part of the cut surface
-    vector<int> _cutSurfaceID; // which manifold cut surface patch a given patch is part of
-    vector<vector<OVM::FaceHandle>> _cutSurfaces; // manifold collections of cut surface patches
+    VH _nRoot;                                      // Root node of dual MC spanning tree
+    CH _bRoot;                                      // Root block of dual MC spanning tree
+    vector<CH> _cellTreePrecursor;                  // Precursor in dual spanning tree
+    vector<bool> _isSkeletonArc;                    // whether a given arc is part of the constraint skeleton
+    vector<bool> _isCutPatch;                       // whether a given patch is part of the cut surface
+    vector<int> _cutSurfaceID;                      // which manifold cut surface patch a given patch is part of
+    vector<vector<FH>> _cutSurfaces;                // manifold collections of cut surface patches
     vector<ConstraintNodeType> _constraintNodeType; // tags for different types of constraint tree nodes
-    vector<bool> _arcIsCritical; // tags for critical arcs
+    vector<bool> _arcIsCritical;                    // tags for critical arcs
 };
 
-} // namespace qgp3d
+} // namespace mc3d
 
 #endif

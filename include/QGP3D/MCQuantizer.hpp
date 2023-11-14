@@ -52,11 +52,11 @@ class MCQuantizer : public virtual MCMeshManipulator
      */
     struct WeaklyMonotonousPath
     {
-        OVM::VertexHandle n;  // Current node
+        VH n;  // Current node
         UVWDir dirs1;         // Direction of extension of source
 
-        map<UVWDir, vector<OVM::EdgeHandle>> dir2walkedArcs;
-        vector<OVM::HalfEdgeHandle> path;
+        map<UVWDir, vector<EH>> dir2walkedArcs;
+        vector<HEH> path;
         // For efficiency dont store separate paths for each direction. Instead store the possible
         // monotonous directions that can still be realized given the current path
         UVWDir monotonousDirs;
@@ -71,7 +71,7 @@ class MCQuantizer : public virtual MCMeshManipulator
         // this path, as there is no weakly monotonous connection to an endpoint within [deltaMin, deltaMax] anymore
         Vec3i delta;
 
-        OVM::CellHandle bRefCurrent;
+        CH bRefCurrent;
         Transition transCurrent;
 
         Q length = 0;
@@ -101,7 +101,7 @@ class MCQuantizer : public virtual MCMeshManipulator
                                          const vector<bool>& arcIsCritical,
                                          const vector<bool>& nodeIsCritical,
                                          const vector<bool>& patchIsCritical,
-                                         vector<vector<std::pair<int, OVM::EdgeHandle>>>& nonZeroSumArcs) const;
+                                         vector<vector<std::pair<int, EH>>>& nonZeroSumArcs) const;
 
   protected:
     /**
@@ -116,7 +116,7 @@ class MCQuantizer : public virtual MCMeshManipulator
                               const vector<bool>& arcIsCritical,
                               const vector<bool>& nodeIsCritical,
                               const vector<bool>& patchIsCritical,
-                              vector<vector<std::pair<int, OVM::EdgeHandle>>>& nonZeroSumArcs) const;
+                              vector<vector<std::pair<int, EH>>>& nonZeroSumArcs) const;
 
     /**
      * @brief During monotonous path expansion, this is used to determine the set of valid
@@ -129,8 +129,8 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @return RetCode SUCCESS or error code
      */
     RetCode determineNextHalfedges(const WeaklyMonotonousPath& currentP,
-                                   map<OVM::CellHandle, Transition>& b2trans,
-                                   map<OVM::HalfEdgeHandle, vector<OVM::CellHandle>>& ha2bRef) const;
+                                   map<CH, Transition>& b2trans,
+                                   map<HEH, vector<CH>>& ha2bRef) const;
 
     /**
      * @brief Check if source of \p currentP and \p ha (must be connected to endpoint of
@@ -144,8 +144,8 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @return false else
      */
     bool checkArcOverlap(const WeaklyMonotonousPath& currentP,
-                         const OVM::HalfEdgeHandle& ha,
-                         const OVM::CellHandle& bRef,
+                         const HEH& ha,
+                         const CH& bRef,
                          const Transition& trans) const;
 
     /**
@@ -159,7 +159,7 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @return false else
      */
     bool checkPatchOverlap(const WeaklyMonotonousPath& currentP,
-                           const OVM::HalfFaceHandle& hp,
+                           const HFH& hp,
                            const Transition& trans) const;
 
     /**
@@ -179,14 +179,13 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @param max1 IN: Max point of bbox1
      * @param min2 IN: Min point of bbox2
      * @param max2 IN: Max point of bbox2
-     * @param nDimFullOverlap OUT: in how many dimensions they are actually overlapping (and not just touching)
      * @return true if overlapping
      * @return false else
      */
     static bool
-    bboxOverlap(const Vec3i& min1, const Vec3i& max1, const Vec3i& min2, const Vec3i& max2, int& nDimFullOverlap);
+    bboxOverlap(const Vec3i& min1, const Vec3i& max1, const Vec3i& min2, const Vec3i& max2);
 };
 
-} // namespace qgp3d
+} // namespace mc3d
 
 #endif

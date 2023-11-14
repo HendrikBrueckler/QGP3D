@@ -11,11 +11,11 @@ using namespace mc3d;
  */
 struct PathConstraint
 {
-    OVM::VertexHandle vFrom; // Path start vertex
-    OVM::VertexHandle vTo;   // Path end vertex
+    VH vFrom; // Path start vertex
+    VH vTo;   // Path end vertex
 
-    OVM::CellHandle tetFrom; // Path start reference tet
-    OVM::CellHandle tetTo;   // Path end reference tet
+    CH tetFrom; // Path start reference tet
+    CH tetTo;   // Path end reference tet
 
     vector<OVM::HalfFaceHandle> pathHalffaces; // Halffaces traversed by path between start and end
 

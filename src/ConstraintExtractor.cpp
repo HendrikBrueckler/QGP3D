@@ -12,16 +12,16 @@ ConstraintExtractor::ConstraintExtractor(const TetMeshProps& meshProps)
 {
 }
 
-vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs()
+vector<vector<HEH>> ConstraintExtractor::getCriticalSkeletonArcs()
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
 
     assignNodeTypes();
 
     // Mark cut patches.
     markCutPatches();
 
-    vector<vector<OVM::HalfEdgeHandle>> nodeTreePaths;
+    vector<vector<HEH>> nodeTreePaths;
     // Mark one node per cut patch
     _isSkeletonArc = vector<bool>(mcMesh.n_edges(), false);
 
@@ -30,15 +30,15 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs
         vector<bool> nVisited(mcMesh.n_edges(), false);
 
         nVisited[mcMesh.v_iter()->idx()] = true;
-        list<OVM::VertexHandle> nQ({*mcMesh.v_iter()});
+        list<VH> nQ({*mcMesh.v_iter()});
         while (!nQ.empty())
         {
-            auto n = nQ.front();
+            VH n = nQ.front();
             nQ.pop_front();
 
-            for (auto ha : mcMesh.outgoing_halfedges(n))
+            for (HEH ha : mcMesh.outgoing_halfedges(n))
             {
-                auto nTo = mcMesh.to_vertex_handle(ha);
+                VH nTo = mcMesh.to_vertex_handle(ha);
                 if (!nVisited[nTo.idx()])
                 {
                     _isSkeletonArc[mcMesh.edge_handle(ha).idx()] = true;
@@ -50,9 +50,9 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs
     }
 
     // Shrink from all nodes with only one arc, if node is not singular
-    list<OVM::EdgeHandle> aQ;
-    for (auto a : mcMesh.edges())
-        for (auto n : mcMesh.edge_vertices(a))
+    list<EH> aQ;
+    for (EH a : mcMesh.edges())
+        for (VH n : mcMesh.edge_vertices(a))
         {
             if (countIncidentSkeletonArcs(n) == 1 && _constraintNodeType[n.idx()] == NONE)
             {
@@ -65,11 +65,11 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs
     while (!aQ.empty())
     {
         // get next element
-        auto a = aQ.front();
+        EH a = aQ.front();
         aQ.pop_front();
-        for (auto n : mcMesh.edge_vertices(a))
+        for (VH n : mcMesh.edge_vertices(a))
             if (countIncidentSkeletonArcs(n) == 1 && _constraintNodeType[n.idx()] == NONE)
-                for (auto aNext : mcMesh.vertex_edges(n))
+                for (EH aNext : mcMesh.vertex_edges(n))
                     if (_isSkeletonArc[aNext.idx()])
                     {
                         _isSkeletonArc[aNext.idx()] = false;
@@ -79,28 +79,18 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs
 
     // Extract paths from MSP
     {
-        OVM::VertexHandle leaf;
-        // Start from a leaf:
-        for (auto n : mcMesh.vertices())
-        {
-            if (countIncidentSkeletonArcs(n) != 1)
-                continue;
-            if (_constraintNodeType[n.idx()] == NONE)
-                throw std::logic_error("Invalid MSP leaf");
-            leaf = n;
-            break;
-        }
         // TODO handle case where no leaf node exists
+        VH leaf = findMatching(mcMesh.vertices(), [this](const VH& n) { return countIncidentSkeletonArcs(n) == 1; });
         if (leaf.is_valid())
         {
             // exhaustive graph search from leaf
             vector<bool> nVisited(mcMesh.n_vertices(), false);
             nVisited[leaf.idx()] = true;
-            list<OVM::VertexHandle> nQ({leaf});
-            list<vector<OVM::HalfEdgeHandle>> pathQ({vector<OVM::HalfEdgeHandle>()});
+            list<VH> nQ({leaf});
+            list<vector<HEH>> pathQ({vector<HEH>()});
             while (!nQ.empty())
             {
-                auto n = nQ.front();
+                VH n = nQ.front();
                 auto path = pathQ.front();
                 nQ.pop_front();
                 pathQ.pop_front();
@@ -114,11 +104,11 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs
                         path = {};
                 }
 
-                for (auto ha : mcMesh.outgoing_halfedges(n))
+                for (HEH ha : mcMesh.outgoing_halfedges(n))
                 {
                     if (!_isSkeletonArc[mcMesh.edge_handle(ha).idx()])
                         continue;
-                    auto nTo = mcMesh.to_vertex_handle(ha);
+                    VH nTo = mcMesh.to_vertex_handle(ha);
                     if (!nVisited[nTo.idx()])
                     {
                         nVisited[nTo.idx()] = true;
@@ -134,7 +124,7 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs
     LOG(INFO) << nodeTreePaths.size() << " paths in spanning tree of critical nodes";
 
     // Get cycles constraining cut graph
-    vector<vector<OVM::HalfEdgeHandle>> cycles = getCutSurfaceCycles();
+    vector<vector<HEH>> cycles = getCutSurfaceCycles();
     LOG(INFO) << cycles.size() << " cycles through " << _cutSurfaces.size() << " cut surfaces determined";
     for (auto& cycle : cycles)
         nodeTreePaths.emplace_back(cycle);
@@ -143,61 +133,61 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCriticalSkeletonArcs
 }
 
 vector<ConstraintExtractor::TetPathConstraint>
-ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHandle>>& haSequences)
+ConstraintExtractor::getTetPathConstraints(const vector<vector<HEH>>& haSequences)
 {
-    assert(_meshPropsC.isAllocated<CHART_ORIG>());
-    assert(_meshPropsC.isAllocated<TRANSITION_ORIG>());
-    assert(_meshPropsC.isAllocated<IS_ORIGINAL_VTX>());
+    assert(meshProps().isAllocated<CHART_ORIG>());
+    assert(meshProps().isAllocated<TRANSITION_ORIG>());
+    assert(meshProps().isAllocated<IS_ORIGINAL_V>());
 
-    auto& mcMesh = _mcMeshPropsC.mesh;
-    auto& tetMesh = _meshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
+    auto& tetMesh = meshProps().mesh();
     vector<TetPathConstraint> tetPathConstraints;
 
-    map<OVM::CellHandle, OVM::CellHandle> tet2parent;
-    assert(_meshPropsC.isAllocated<CHILD_CELLS>());
-    const auto& childTetProp = _meshPropsC.prop<CHILD_CELLS>();
+    map<CH, CH> tet2parent;
+    assert(meshProps().isAllocated<CHILD_CELLS>());
+    const auto& childTetProp = meshProps().prop<CHILD_CELLS>();
     for (auto kv : childTetProp)
-        for (auto child : kv.second)
+        for (CH child : kv.second)
             tet2parent[child] = kv.first;
 
-    map<OVM::EdgeHandle, OVM::EdgeHandle> e2parent;
-    assert(_meshPropsC.isAllocated<CHILD_EDGES>());
-    const auto& childEdgeProp = _meshPropsC.prop<CHILD_EDGES>();
+    map<EH, EH> e2parent;
+    assert(meshProps().isAllocated<CHILD_EDGES>());
+    const auto& childEdgeProp = meshProps().prop<CHILD_EDGES>();
     for (auto kv : childEdgeProp)
-        for (auto child : kv.second)
+        for (EH child : kv.second)
             e2parent[child] = kv.first;
 
-    map<OVM::FaceHandle, OVM::FaceHandle> f2parent;
-    assert(_meshPropsC.isAllocated<CHILD_FACES>());
-    const auto& childFaceProp = _meshPropsC.prop<CHILD_FACES>();
+    map<FH, FH> f2parent;
+    assert(meshProps().isAllocated<CHILD_FACES>());
+    const auto& childFaceProp = meshProps().prop<CHILD_FACES>();
     for (auto kv : childFaceProp)
-        for (auto child : kv.second)
+        for (FH child : kv.second)
             f2parent[child] = kv.first;
 
     for (auto& haSequence : haSequences)
     {
-        list<OVM::HalfEdgeHandle> pathHas(haSequence.begin(), haSequence.end());
+        list<HEH> pathHas(haSequence.begin(), haSequence.end());
 
         tetPathConstraints.emplace_back();
         auto& path = tetPathConstraints.back();
 
-        auto pathHes = list<OVM::HalfEdgeHandle>();
-        for (auto ha : pathHas)
+        auto pathHes = list<HEH>();
+        for (HEH ha : pathHas)
         {
-            auto haHes = _mcMeshPropsC.haHalfedges(ha);
-            pathHes.insert(pathHes.end(), haHes.begin(), haHes.end());
+            auto hesHa = mcMeshProps().haHalfedges(ha);
+            pathHes.insert(pathHes.end(), hesHa.begin(), hesHa.end());
         }
 
-        auto nStart = mcMesh.from_vertex_handle(haSequence.front());
-        auto nEnd = mcMesh.to_vertex_handle(haSequence.back());
+        VH nStart = mcMesh.from_vertex_handle(haSequence.front());
+        VH nEnd = mcMesh.to_vertex_handle(haSequence.back());
 
         ConstraintNodeType startNodeType = _constraintNodeType[nStart.idx()];
         ConstraintNodeType endNodeType = _constraintNodeType[nEnd.idx()];
 
         assert(startNodeType != NONE && endNodeType != NONE);
 
-        list<OVM::CellHandle> pathTets;
-        for (auto he : pathHes)
+        list<CH> pathTets;
+        for (HEH he : pathHes)
         {
             // First tet may be any tet
             if (pathTets.empty())
@@ -206,7 +196,7 @@ ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHand
                 continue;
             }
 
-            auto vConn = tetMesh.from_vertex_handle(he);
+            VH vConn = tetMesh.from_vertex_handle(he);
 
             auto connectingTets = connectingTetPath(pathTets.back(), he, vConn);
             pathTets.insert(pathTets.end(), connectingTets.begin(), connectingTets.end());
@@ -220,12 +210,12 @@ ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHand
         // on a cyclic singularity) snap it to one of original edges/faces corners
         // this can introduce new tets at the start/end of pathtets, that are not necessarily incident to first/last
         // path halfedge!
-        determineEquivalentEndpoints(path, pathTets, e2parent, f2parent, tet2parent);
+        determineEquivalentEndpoints(path, pathTets, e2parent, f2parent);
 
         // Now get the original tet sequence
-        for (auto tet : pathTets)
+        for (CH tet : pathTets)
         {
-            auto tetOrig = tet;
+            CH tetOrig = tet;
             auto it = tet2parent.find(tetOrig);
             while (it != tet2parent.end())
             {
@@ -237,7 +227,7 @@ ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHand
         }
         assert(!path.pathOrigTets.empty());
 
-        vector<OVM::CellHandle> pathCheck;
+        vector<CH> pathCheck;
         path.offset = Vec3i(0, 0, 0);
         Vec3i ignore(0, 0, 0);
         {
@@ -263,30 +253,30 @@ ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHand
             // first he)
             walkToMatchingTet(tetMesh.edge_handle(*itHe), itTet, transOrigCurr);
 
-            for (auto ha : pathHas)
+            for (HEH ha : pathHas)
             {
                 {
                     // We are at the first halfedge of the current halfarc
                     // We can use this to get the arc direction under the orig param
-                    auto tet = *itTet;
-                    auto he = *itHe;
-                    auto& chartOrig = _meshPropsC.ref<CHART_ORIG>(tet);
-                    auto uvwOrig1 = chartOrig.at(_meshPropsC.mesh.from_vertex_handle(he));
-                    auto uvwOrig2 = chartOrig.at(_meshPropsC.mesh.to_vertex_handle(he));
-                    auto dir = transOrigCurr.invert().rotate(toDir(uvwOrig2 - uvwOrig1));
+                    CH tet = *itTet;
+                    HEH he = *itHe;
+                    auto& chartOrig = meshProps().ref<CHART_ORIG>(tet);
+                    auto uvwOrig1 = chartOrig.at(meshProps().mesh().from_vertex_handle(he));
+                    auto uvwOrig2 = chartOrig.at(meshProps().mesh().to_vertex_handle(he));
+                    UVWDir dir = transOrigCurr.invert().rotate(toDir(uvwOrig2 - uvwOrig1));
 
                     if (dim(dir) != 1)
                         throw std::logic_error("invalid arc dir");
 
                     // DLOG(INFO) << "Path " << path.vFrom << "->" << path.vTo << ": accumulating offset "
-                    //            << Vec3d(toVec(dir)) * _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha))
+                    //            << Vec3d(toVec(dir)) * mcMeshProps().get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha))
                     //            << " of ha " << ha;
-                    path.offset += toVec(dir) * _mcMeshPropsC.get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
+                    path.offset += toVec(dir) * mcMeshProps().get<ARC_INT_LENGTH>(mcMesh.edge_handle(ha));
                 }
 
                 // Go along pathHes until vTo is reached;
-                auto nTo = mcMesh.to_vertex_handle(ha);
-                auto vTo = _mcMeshPropsC.get<NODE_MESH_VERTEX>(nTo);
+                VH nTo = mcMesh.to_vertex_handle(ha);
+                VH vTo = mcMeshProps().get<NODE_MESH_VERTEX>(nTo);
                 while (tetMesh.to_vertex_handle(*itHe) != vTo)
                 {
                     itHe++;
@@ -315,11 +305,6 @@ ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHand
                     ignore[boundaryCoords.first] = true;
                     ignore[boundaryCoords.second] = true;
                 }
-
-                // if (he == pathHes.back())
-                // {
-                //     DLOG(INFO) << "FINAL ROTATION " << transOrigCurr.invert().rotation;
-                // }
             }
             // This assertion does not hold true, because we might have appended connector tets.
             // However, they are irrelevant for offset as all path arc directions have already been determined.
@@ -334,44 +319,28 @@ ConstraintExtractor::getTetPathConstraints(const vector<vector<OVM::HalfEdgeHand
     return tetPathConstraints;
 }
 
-list<OVM::CellHandle> ConstraintExtractor::connectingTetPath(const OVM::CellHandle& tetStart,
-                                                             const OVM::HalfEdgeHandle& heTarget,
-                                                             const OVM::VertexHandle& vConn) const
+list<CH> ConstraintExtractor::connectingTetPath(const CH& tetStart, const HEH& heTarget, const VH& vConn) const
 {
     assert(heTarget.is_valid());
-    auto& tetMesh = _meshPropsC.mesh;
-    set<OVM::CellHandle> tetsVisited({tetStart});
-    list<list<OVM::CellHandle>> tetQ({{tetStart}});
+    auto& tetMesh = meshProps().mesh();
+    set<CH> tetsVisited({tetStart});
+    list<list<CH>> tetQ({{tetStart}});
     bool hasHe = false;
     while (!tetQ.empty())
     {
         auto tets = tetQ.front();
         tetQ.pop_front();
 
-        for (auto e : tetMesh.cell_edges(tets.back()))
-            if (e == tetMesh.edge_handle(heTarget))
-            {
-                hasHe = true;
-                break;
-            }
+        hasHe = contains(tetMesh.cell_edges(tets.back()), tetMesh.edge_handle(heTarget));
         if (hasHe)
         {
             tets.pop_front(); // First cell is tetStart
             return tets;
         }
 
-        for (auto tetNext : tetMesh.cell_cells(tets.back()))
+        for (CH tetNext : tetMesh.cell_cells(tets.back()))
         {
-            if (tetsVisited.find(tetNext) != tetsVisited.end())
-                continue;
-            bool hasVConn = false;
-            for (auto v : tetMesh.cell_vertices(tetNext))
-                if (v == vConn)
-                {
-                    hasVConn = true;
-                    break;
-                }
-            if (!hasVConn)
+            if (tetsVisited.find(tetNext) != tetsVisited.end() || !contains(tetMesh.cell_vertices(tetNext), vConn))
                 continue;
             auto tetsPlus = tets;
             tetsPlus.emplace_back(tetNext);
@@ -383,44 +352,28 @@ list<OVM::CellHandle> ConstraintExtractor::connectingTetPath(const OVM::CellHand
     return {};
 }
 
-list<OVM::CellHandle> ConstraintExtractor::connectingTetPath(const OVM::CellHandle& tetStart,
-                                                             const OVM::HalfFaceHandle& hfTarget,
-                                                             const OVM::VertexHandle& vConn) const
+list<CH> ConstraintExtractor::connectingTetPath(const CH& tetStart, const HFH& hfTarget, const VH& vConn) const
 {
     assert(hfTarget.is_valid());
-    auto& tetMesh = _meshPropsC.mesh;
-    set<OVM::CellHandle> tetsVisited({tetStart});
-    list<list<OVM::CellHandle>> tetQ({{tetStart}});
+    auto& tetMesh = meshProps().mesh();
+    set<CH> tetsVisited({tetStart});
+    list<list<CH>> tetQ({{tetStart}});
     bool hasHf = false;
     while (!tetQ.empty())
     {
         auto tets = tetQ.front();
         tetQ.pop_front();
 
-        for (auto hf : tetMesh.cell_halffaces(tets.back()))
-            if (hf == hfTarget)
-            {
-                hasHf = true;
-                break;
-            }
+        hasHf = contains(tetMesh.cell_halffaces(tets.back()), hfTarget);
         if (hasHf)
         {
             tets.pop_front(); // First cell is tetStart
             return tets;
         }
 
-        for (auto tetNext : tetMesh.cell_cells(tets.back()))
+        for (CH tetNext : tetMesh.cell_cells(tets.back()))
         {
-            if (tetsVisited.find(tetNext) != tetsVisited.end())
-                continue;
-            bool hasVConn = false;
-            for (auto v : tetMesh.cell_vertices(tetNext))
-                if (v == vConn)
-                {
-                    hasVConn = true;
-                    break;
-                }
-            if (!hasVConn)
+            if (tetsVisited.find(tetNext) != tetsVisited.end() || !contains(tetMesh.cell_vertices(tetNext), vConn))
                 continue;
             auto tetsPlus = tets;
             tetsPlus.emplace_back(tetNext);
@@ -432,63 +385,59 @@ list<OVM::CellHandle> ConstraintExtractor::connectingTetPath(const OVM::CellHand
     return {};
 }
 
-Transition ConstraintExtractor::transitionAlongPath(const list<OVM::CellHandle>& path) const
+Transition ConstraintExtractor::transitionAlongPath(const list<CH>& path) const
 {
     if (path.size() < 2)
         return Transition();
 
-    auto& tetMesh = _meshPropsC.mesh;
+    auto& tetMesh = meshProps().mesh();
     Transition transTotal;
     for (auto itTet = path.begin(); itTet != --path.end();)
     {
-        auto tetPre = *itTet;
+        CH tetPre = *itTet;
         itTet++;
-        auto tetPost = *itTet;
+        CH tetPost = *itTet;
         // Accumulate transition
-        OVM::HalfFaceHandle hfBetween;
-        for (auto hf : tetMesh.cell_halffaces(tetPre))
-            if (tetMesh.incident_cell(tetMesh.opposite_halfface_handle(hf)) == tetPost)
-            {
-                hfBetween = hf;
-                break;
-            }
+        HFH hfBetween = findMatching(
+            tetMesh.cell_halffaces(tetPre),
+            [&](const HFH& hf) { return tetMesh.incident_cell(tetMesh.opposite_halfface_handle(hf)) == tetPost; });
         assert(hfBetween.is_valid());
-        auto trans = _meshPropsC.hfTransitionOrig(hfBetween);
+        Transition trans = meshProps().hfTransition<TRANSITION_ORIG>(hfBetween);
         transTotal = transTotal.chain(trans);
     }
     return transTotal;
 }
 
-int ConstraintExtractor::countCutPatches(const OVM::EdgeHandle& a) const
+int ConstraintExtractor::countCutPatches(const EH& a) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
     int n = 0;
-    for (auto p : mcMesh.edge_faces(a))
+    for (FH p : mcMesh.edge_faces(a))
         if (_isCutPatch[p.idx()])
             n++;
     return n;
 }
 
-bool ConstraintExtractor::isOnActualCut(const OVM::VertexHandle& n) const
+bool ConstraintExtractor::isInActualCut(const VH& n) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
-    for (auto p : mcMesh.vertex_faces(n))
+    auto& mcMesh = mcMeshProps().mesh();
+    for (FH p : mcMesh.vertex_faces(n))
         if (_isCutPatch[p.idx()] && !mcMesh.is_boundary(p))
             return true;
     return false;
 }
 
-int ConstraintExtractor::countIncidentSkeletonArcs(const OVM::VertexHandle& n) const
+int ConstraintExtractor::countIncidentSkeletonArcs(const VH& n) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
     int count = 0;
-    for (auto a : mcMesh.vertex_edges(n))
+    for (EH a : mcMesh.vertex_edges(n))
         if (_isSkeletonArc[a.idx()])
             count++;
     return count;
 }
 
-void ConstraintExtractor::getCutSurfaces(vector<vector<OVM::FaceHandle>>& cutSurfaces, vector<int>& p2cutSurface)
+void ConstraintExtractor::getCutSurfaces(vector<vector<FH>>& cutSurfaces, vector<int>& p2cutSurface)
 {
     assignNodeTypes();
 
@@ -499,12 +448,12 @@ void ConstraintExtractor::getCutSurfaces(vector<vector<OVM::FaceHandle>>& cutSur
 
 void ConstraintExtractor::assignNodeTypes()
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
 
-    vector<MCQuantizer::CriticalLink> criticalLinks;
-    map<OVM::EdgeHandle, int> a2criticalLinkIdx;
-    map<OVM::VertexHandle, vector<int>> n2criticalLinksOut;
-    map<OVM::VertexHandle, vector<int>> n2criticalLinksIn;
+    vector<CriticalLink> criticalLinks;
+    map<EH, int> a2criticalLinkIdx;
+    map<VH, vector<int>> n2criticalLinksOut;
+    map<VH, vector<int>> n2criticalLinksIn;
     getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
 
     _arcIsCritical = vector<bool>(mcMesh.n_edges(), false);
@@ -522,7 +471,7 @@ void ConstraintExtractor::assignNodeTypes()
     for (auto* coll : {&n2criticalLinksIn, &n2criticalLinksOut})
         for (auto& kv : *coll)
         {
-            auto type = nodeType(kv.first);
+            auto type = mcMeshProps().nodeType(kv.first);
             if (type.first == SingularNodeType::SINGULAR || type.second == FeatureNodeType::FEATURE
                 || type.second == FeatureNodeType::SEMI_FEATURE_SINGULAR_BRANCH)
                 _constraintNodeType[kv.first.idx()] = NATIVE;
@@ -531,7 +480,7 @@ void ConstraintExtractor::assignNodeTypes()
         }
 
     vector<BoundaryRegion> boundaryRegions;
-    map<OVM::HalfFaceHandle, int> hp2boundaryID;
+    map<HFH, int> hp2boundaryID;
     getBoundaryRegions(boundaryRegions, hp2boundaryID);
 
     int nBorderless = 0;
@@ -543,14 +492,9 @@ void ConstraintExtractor::assignNodeTypes()
     // Check for boundary regions with no critical nodes or critical arcs in them
     for (auto& region : boundaryRegions)
     {
-        bool hasCriticalNode = false;
-        for (auto n : region.ns)
-            if (n2criticalLinksIn.count(n) != 0 || n2criticalLinksOut.count(n) != 0)
-            {
-                hasCriticalNode = true;
-                break;
-            }
-        if (hasCriticalNode)
+        if (containsMatching(region.ns,
+                             [&](const VH& n)
+                             { return n2criticalLinksIn.count(n) != 0 || n2criticalLinksOut.count(n) != 0; }))
             continue;
         assert(!region.ns.empty());
         _constraintNodeType[region.ns.begin()->idx()] = ARTIFICIAL_ON_BOUNDARY;
@@ -559,7 +503,7 @@ void ConstraintExtractor::assignNodeTypes()
     int nNative = 0;
     int nArtificialOnLink = 0;
     int nArtificialOnBoundary = 0;
-    for (auto n : mcMesh.vertices())
+    for (VH n : mcMesh.vertices())
         if (_constraintNodeType[n.idx()] == NATIVE)
             nNative++;
         else if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
@@ -573,128 +517,130 @@ void ConstraintExtractor::assignNodeTypes()
               << nNative + nArtificialOnBoundary + nArtificialOnLink << " total)";
 }
 
-void ConstraintExtractor::markCutPatches()
+bool ConstraintExtractor::buildBlockSpanningTree(VH& nRoot,
+                                                 CH& bRoot,
+                                                 vector<CH>& cellTreePrecursor,
+                                                 int cutSurfaceToAvoid)
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
-    _cellTreePrecursor = vector<OVM::CellHandle>(mcMesh.n_cells(), OVM::CellHandle(-1));
+    auto& mcMesh = mcMeshProps().mesh();
 
-    // From AlgoHex' generate_cut_surface()
+    cellTreePrecursor = vector<CH>(mcMesh.n_cells(), CH(-1));
 
     // 1. start with trivial cut (all faces are cut)
-    _isCutPatch = vector<bool>(mcMesh.n_faces(), true);
+    if (cutSurfaceToAvoid < 0)
+        _isCutPatch = vector<bool>(mcMesh.n_faces(), true);
 
+    // 2. reduce cut-faces by dual spanning tree
+
+    // Find strictly singular node
+    nRoot = findMatching(mcMesh.vertices(),
+                         [&](const VH& n)
+                         {
+                             return _constraintNodeType[n.idx()] == NATIVE
+                                    && (cutSurfaceToAvoid < 0
+                                        || !containsMatching(mcMesh.vertex_faces(n),
+                                                             [&, this](const FH& p)
+                                                             { return _cutSurfaceID[p.idx()] == cutSurfaceToAvoid; }));
+                         });
+
+    // Else, find artificial singular node
+    if (!nRoot.is_valid())
+        nRoot = findMatching(mcMesh.vertices(),
+                             [&](const VH& n)
+                             {
+                                 return (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK
+                                         || _constraintNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
+                                        && (cutSurfaceToAvoid < 0
+                                            || !containsMatching(mcMesh.vertex_faces(n),
+                                                                 [&, this](const FH& p) {
+                                                                     return _cutSurfaceID[p.idx()] == cutSurfaceToAvoid;
+                                                                 }));
+                             });
+
+    // Else fail
+    if (!nRoot.is_valid())
+        return false;
+
+    bRoot = *mcMesh.vc_iter(nRoot);
+    // add seed
+    vector<bool> bVisited(mcMesh.n_cells(), false);
+    bVisited[bRoot.idx()] = true;
+    list<CH> bQ({bRoot});
+
+    // grow tree until all cells in connected component visited
+    while (!bQ.empty())
     {
-        // 2. reduce cut-faces by dual spanning tree
-        vector<bool> bVisited(mcMesh.n_cells(), false);
+        // get opposite of next halfface
+        CH b = bQ.front();
+        bQ.pop_front();
 
-        // Find strictly singular node
-        for (auto n : mcMesh.vertices())
-            if (_constraintNodeType[n.idx()] == NATIVE)
-            {
-                _bRoot = *mcMesh.vc_iter(n);
-                _nRoot = n;
-                break;
-            }
-
-        // Else, find artificial singular node
-        if (!_nRoot.is_valid())
+        // if b == bRoot, handle first halffaces that contain nRoot, so nRoot does not land on cut surface
+        list<HFH> hps;
+        for (HFH hp : mcMesh.cell_halffaces(b))
         {
-            for (auto n : mcMesh.vertices())
-                if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK
-                    || _constraintNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
-                {
-                    _bRoot = *mcMesh.vc_iter(n);
-                    _nRoot = n;
-                    break;
-                }
-        }
-
-        // Else fail
-        assert(_nRoot.is_valid());
-        assert(_bRoot.is_valid());
-        // add seed
-        list<OVM::CellHandle> bQ({_bRoot});
-        bVisited[_bRoot.idx()] = true;
-
-        // grow tree until all cells in connected component visited
-        while (!bQ.empty())
-        {
-            // get opposite of next halfface
-            auto b = bQ.front();
-            bQ.pop_front();
-
-            // if b == bRoot, handle first halffaces that contain nRoot, so nRoot does not land on cut surface
-            list<OVM::HalfFaceHandle> hps;
-            for (auto hp : mcMesh.cell_halffaces(b))
+            if (b == bRoot)
             {
-                if (b == _bRoot)
-                {
-                    bool hasNRoot = false;
-                    for (auto n : mcMesh.halfface_vertices(hp))
-                        if (n == _nRoot)
-                        {
-                            hasNRoot = true;
-                            break;
-                        }
-                    if (hasNRoot)
-                        hps.push_front(hp);
-                    else
-                        hps.push_back(hp);
-                }
+                if (contains(mcMesh.halfface_vertices(hp), nRoot))
+                    hps.push_front(hp);
                 else
                     hps.push_back(hp);
             }
+            else
+                hps.push_back(hp);
+        }
 
-            for (auto hp : hps)
+        for (HFH hp : hps)
+        {
+            hp = mcMesh.opposite_halfface_handle(hp);
+            // only process if not on boundary
+            if (!mcMesh.is_boundary(hp) && (cutSurfaceToAvoid < 0 || !_isCutPatch[mcMesh.face_handle(hp).idx()]))
             {
-                hp = mcMesh.opposite_halfface_handle(hp);
-                // only process if not on boundary
-                if (!mcMesh.is_boundary(hp))
+                // check if cell already visited
+                CH bNext = mcMesh.incident_cell(hp);
+                if (!bVisited[bNext.idx()])
                 {
-                    // check if cell already visited
-                    OVM::CellHandle bNext = mcMesh.incident_cell(hp);
-                    if (!bVisited[bNext.idx()])
-                    {
-                        // remove face from cutgraph
-                        _isCutPatch[mcMesh.face_handle(hp).idx()] = false;
-                        // process cell
-                        bVisited[bNext.idx()] = true;
-                        bQ.push_back(bNext);
-                        _cellTreePrecursor[bNext.idx()] = b;
-                    }
+                    if (cutSurfaceToAvoid < 0)
+                        _isCutPatch[mcMesh.face_handle(hp).idx()] = false; // remove face from cutgraph
+                    // process cell
+                    bVisited[bNext.idx()] = true;
+                    bQ.push_back(bNext);
+                    _cellTreePrecursor[bNext.idx()] = b;
                 }
             }
         }
-
-#ifndef NDEBUG
-        // assert all cells have been visited (so all have a precursor except _bRoot)
-        for (auto b : mcMesh.cells())
-            assert(bVisited[b.idx()]);
-#endif
     }
+    return true;
+}
+
+void ConstraintExtractor::markCutPatches()
+{
+    auto& mcMesh = mcMeshProps().mesh();
+
+    // From AlgoHex' generate_cut_surface()
+    if (!buildBlockSpanningTree(_nRoot, _bRoot, _cellTreePrecursor, -1))
+        throw std::logic_error("No leaf node in spanning tree");
+
     {
         // 3. further shrink cut surface
-        list<OVM::FaceHandle> pQ;
+        list<FH> pQ;
         // initialize queue with edges (1) not on boundary, and (2) adjacent to one cut face
-        for (auto p : mcMesh.faces())
-            for (auto a : mcMesh.face_edges(p))
-                if (countCutPatches(a) == 1)
-                {
-                    pQ.push_back(p);
-                    _isCutPatch[p.idx()] = false;
-                    break;
-                }
+        for (FH p : mcMesh.faces())
+            if (containsMatching(mcMesh.face_edges(p), [&, this](const EH& a) { return countCutPatches(a) == 1; }))
+            {
+                pQ.push_back(p);
+                _isCutPatch[p.idx()] = false;
+            }
 
         // shrink while possible
         while (!pQ.empty())
         {
             // get next element
-            auto p = pQ.front();
+            FH p = pQ.front();
             pQ.pop_front();
 
-            for (auto a : mcMesh.face_edges(p))
+            for (EH a : mcMesh.face_edges(p))
                 if (countCutPatches(a) == 1)
-                    for (auto pNext : mcMesh.edge_faces(a))
+                    for (FH pNext : mcMesh.edge_faces(a))
                         if (_isCutPatch[pNext.idx()])
                         {
                             _isCutPatch[pNext.idx()] = false;
@@ -703,12 +649,12 @@ void ConstraintExtractor::markCutPatches()
         }
     }
 
-    for (auto a : mcMesh.edges())
+    for (EH a : mcMesh.edges())
         if (countCutPatches(a) == 1)
             throw std::logic_error("ERROR: there are shrinking candidates left but queue is empty!");
 
     // Remove boundary
-    for (auto p : mcMesh.faces())
+    for (FH p : mcMesh.faces())
         if (mcMesh.is_boundary(p))
         {
             assert(_isCutPatch[p.idx()]);
@@ -719,7 +665,7 @@ void ConstraintExtractor::markCutPatches()
     _cutSurfaces.clear();
     _cutSurfaceID = vector<int>(mcMesh.n_faces(), -1);
     vector<bool> pVisited(mcMesh.n_faces(), false);
-    for (auto p : mcMesh.faces())
+    for (FH p : mcMesh.faces())
         if (_isCutPatch[p.idx()] && !pVisited[p.idx()])
         {
             // grow a new manifold patch
@@ -728,18 +674,17 @@ void ConstraintExtractor::markCutPatches()
             _cutSurfaceID[p.idx()] = _cutSurfaces.size() - 1;
             pVisited[p.idx()] = true;
 
-            list<OVM::FaceHandle> pQ({p});
-            vector<OVM::FaceHandle> fhs;
+            list<FH> pQ({p});
             while (!pQ.empty())
             {
-                auto pCurr = pQ.front();
+                FH pCurr = pQ.front();
                 pQ.pop_front();
 
-                for (auto a : mcMesh.face_edges(pCurr))
+                for (EH a : mcMesh.face_edges(pCurr))
                 {
                     if (!mcMesh.is_boundary(a) && countCutPatches(a) == 2)
                     {
-                        for (auto pNext : mcMesh.edge_faces(a))
+                        for (FH pNext : mcMesh.edge_faces(a))
                         {
                             if (_isCutPatch[pNext.idx()] && !pVisited[pNext.idx()])
                             {
@@ -755,14 +700,67 @@ void ConstraintExtractor::markCutPatches()
         }
 }
 
-vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCutSurfaceCycles()
+vector<HEH> ConstraintExtractor::cycleThroughCutSurface(
+    const VH& nStart, const FH& pStart, const VH& nRoot, const CH& bRoot, const vector<CH>& cellTreePrecursor) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
+
+    vector<HEH> cycle;
+    for (bool forward : {false, true})
+    {
+        CH b = mcMesh.incident_cell(mcMesh.halfface_handle(pStart, forward));
+        VH n = nStart;
+        list<HEH> halfpath;
+        // Find a path connecting nStart to nRoot and going through all the cells in the sequence
+        while (b != bRoot)
+        {
+            CH bNext = cellTreePrecursor[b.idx()];
+
+            FH pInterface = mcMesh.face_handle(
+                findMatching(mcMesh.cell_halffaces(b),
+                             [&, this](const HFH& hp)
+                             {
+                                 return !_isCutPatch[mcMesh.face_handle(hp).idx()]
+                                        && mcMesh.incident_cell(mcMesh.opposite_halfface_handle(hp)) == bNext;
+                             }));
+            set<VH> nsTarget;
+            for (VH nTarget : mcMesh.face_vertices(pInterface))
+                nsTarget.insert(nTarget);
+
+            auto connector = pathThroughBlock(n, nsTarget, b);
+            halfpath.insert(halfpath.end(), connector.begin(), connector.end());
+
+            n = connector.empty() ? n : mcMesh.to_vertex_handle(connector.back());
+            if (nsTarget.count(n) == 0)
+                throw std::logic_error("Found vertex not in nsTarget");
+            b = bNext;
+        }
+        auto connector = pathThroughBlock(n, {nRoot}, bRoot);
+        halfpath.insert(halfpath.end(), connector.begin(), connector.end());
+
+        if (forward)
+            cycle.insert(cycle.end(), halfpath.begin(), halfpath.end());
+        else
+        {
+            halfpath.reverse();
+            for (HEH ha : halfpath)
+                cycle.emplace_back(mcMesh.opposite_halfedge_handle(ha));
+        }
+    }
+
+    if (mcMesh.from_vertex_handle(cycle.front()) != mcMesh.to_vertex_handle(cycle.back()))
+        throw std::logic_error("Unclosed cycle");
+    return cycle;
+}
+
+vector<vector<HEH>> ConstraintExtractor::getCutSurfaceCycles()
+{
+    auto& mcMesh = mcMeshProps().mesh();
 
     if (_cellTreePrecursor[_bRoot.idx()].is_valid())
         throw std::logic_error("Root has precursor");
 
-    vector<vector<OVM::HalfEdgeHandle>> cycles;
+    vector<vector<HEH>> cycles;
     for (auto& cutSurface : _cutSurfaces)
     {
         cycles.emplace_back();
@@ -770,289 +768,59 @@ vector<vector<OVM::HalfEdgeHandle>> ConstraintExtractor::getCutSurfaceCycles()
         // Get any face and trace path back to root in both directions
         if (cutSurface.empty())
             throw std::logic_error("Empty cut surface");
-        auto pStart = cutSurface.front();
-        auto nStart = *mcMesh.fv_iter(pStart);
+        FH pStart = cutSurface.front();
+        VH nStart = *mcMesh.fv_iter(pStart);
 
-        bool nRootOnCutSurface = false;
-        for (auto p : cutSurface)
-        {
-            for (auto n : mcMesh.face_vertices(p))
-                if (n == _nRoot)
-                {
-                    nRootOnCutSurface = true;
-                    break;
-                }
-            if (nRootOnCutSurface)
-                break;
-        }
+        bool nRootOnCutSurface = containsSomeOf(cutSurface, mcMesh.vertex_faces(_nRoot));
         if (!nRootOnCutSurface)
-        {
-            for (bool forward : {false, true})
-            {
-                auto b = mcMesh.incident_cell(mcMesh.halfface_handle(pStart, forward));
-                auto n = nStart;
-                list<OVM::HalfEdgeHandle> halfpath;
-                // Find a path connecting nStart to nRoot and going through all the cells in the sequence
-                while (b != _bRoot)
-                {
-                    auto bNext = _cellTreePrecursor[b.idx()];
-
-                    OVM::FaceHandle pInterface;
-                    for (auto hp : mcMesh.cell_halffaces(b))
-                        if (!_isCutPatch[mcMesh.face_handle(hp).idx()]
-                            && mcMesh.incident_cell(mcMesh.opposite_halfface_handle(hp)) == bNext)
-                        {
-                            pInterface = mcMesh.face_handle(hp);
-                            break;
-                        }
-                    set<OVM::VertexHandle> nsTarget;
-                    for (auto nTarget : mcMesh.face_vertices(pInterface))
-                        nsTarget.insert(nTarget);
-
-                    auto connector = pathThroughBlock(n, nsTarget, b);
-                    halfpath.insert(halfpath.end(), connector.begin(), connector.end());
-
-                    n = connector.empty() ? n : mcMesh.to_vertex_handle(connector.back());
-                    if (nsTarget.count(n) == 0)
-                        throw std::logic_error("Found vertex not in nsTarget");
-                    b = bNext;
-                }
-                auto connector = pathThroughBlock(n, {_nRoot}, _bRoot);
-                halfpath.insert(halfpath.end(), connector.begin(), connector.end());
-
-                if (forward)
-                {
-                    cycle.insert(cycle.end(), halfpath.begin(), halfpath.end());
-                }
-                else
-                {
-                    halfpath.reverse();
-                    for (auto ha : halfpath)
-                        cycle.emplace_back(mcMesh.opposite_halfedge_handle(ha));
-                }
-            }
-            if (mcMesh.from_vertex_handle(cycle.front()) != mcMesh.to_vertex_handle(cycle.back()))
-                throw std::logic_error("Unclosed cycle");
-        }
+            cycle = cycleThroughCutSurface(nStart, pStart, _nRoot, _bRoot, _cellTreePrecursor);
         else
         {
             // Find ANOTHER singular node, suitable as root node
-            OVM::VertexHandle nRootAlt;
-            OVM::CellHandle bRootAlt;
-            vector<OVM::CellHandle> cellTreePrecursorAlt(mcMesh.n_cells(), OVM::CellHandle(-1));
+            vector<CH> cellTreePrecursorAlt(mcMesh.n_cells(), CH(-1));
+            VH nRootAlt;
+            CH bRootAlt;
+            if (!buildBlockSpanningTree(
+                    nRootAlt, bRootAlt, cellTreePrecursorAlt, _cutSurfaceID[cutSurface.front().idx()]))
+                throw std::logic_error("No leaf node in spanning tree");
 
-            // Find strictly singular node
-            for (auto n : mcMesh.vertices())
-                if (_constraintNodeType[n.idx()] == NATIVE)
-                {
-                    bool onCutSurface = false;
-                    for (auto p : mcMesh.vertex_faces(n))
-                        if (_cutSurfaceID[p.idx()] == _cutSurfaceID[cutSurface.front().idx()])
-                        {
-                            onCutSurface = true;
-                            break;
-                        }
-                    if (onCutSurface)
-                        continue;
-                    nRootAlt = n;
-                    bRootAlt = *mcMesh.vc_iter(n);
-                    break;
-                }
-
-            // Else, find artificial singular node
-            if (!nRootAlt.is_valid())
-            {
-                for (auto n : mcMesh.vertices())
-                    if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK
-                        || _constraintNodeType[n.idx()] == ARTIFICIAL_ON_BOUNDARY)
-                    {
-                        bool onCutSurface = false;
-                        for (auto p : mcMesh.vertex_faces(n))
-                            if (_cutSurfaceID[p.idx()] == _cutSurfaceID[cutSurface.front().idx()])
-                            {
-                                onCutSurface = true;
-                                break;
-                            }
-                        if (onCutSurface)
-                            continue;
-                        nRootAlt = n;
-                        bRootAlt = *mcMesh.vc_iter(n);
-                        break;
-                    }
-            }
-
-            // Else fail
-            assert(nRootAlt.is_valid());
-            assert(bRootAlt.is_valid());
-
-            // Build new cell precursor tree, but do not cross any established cut surface
-
-            // add seed
-            vector<bool> bVisited(mcMesh.n_cells(), false);
-            list<OVM::CellHandle> bQ({bRootAlt});
-            bVisited[bRootAlt.idx()] = true;
-
-            // grow tree until all cells in connected component visited
-            while (!bQ.empty())
-            {
-                // get opposite of next halfface
-                auto b = bQ.front();
-                bQ.pop_front();
-
-                // if b == bRoot, handle first halffaces that contain nRoot, so nRoot does not land on cut surface
-                list<OVM::HalfFaceHandle> hps;
-                for (auto hp : mcMesh.cell_halffaces(b))
-                {
-                    if (b == bRootAlt)
-                    {
-                        bool hasNRoot = false;
-                        for (auto n : mcMesh.halfface_vertices(hp))
-                            if (n == nRootAlt)
-                            {
-                                hasNRoot = true;
-                                break;
-                            }
-                        if (hasNRoot)
-                            hps.push_front(hp);
-                        else
-                            hps.push_back(hp);
-                    }
-                    else
-                        hps.push_back(hp);
-                }
-
-                for (auto hp : hps)
-                {
-                    hp = mcMesh.opposite_halfface_handle(hp);
-                    auto p = mcMesh.face_handle(hp);
-                    // only process if not on boundary and not on cut surface
-                    if (!mcMesh.is_boundary(hp) && !_isCutPatch[p.idx()])
-                    {
-                        // check if cell already visited
-                        OVM::CellHandle bNext = mcMesh.incident_cell(hp);
-                        if (!bVisited[bNext.idx()])
-                        {
-                            // process cell
-                            bVisited[bNext.idx()] = true;
-                            bQ.push_back(bNext);
-                            cellTreePrecursorAlt[bNext.idx()] = b;
-                        }
-                    }
-                }
-            }
-#ifndef NDEBUG
-            // assert all cells have been visited (so all have a precursor except bRootAlt)
-            for (auto b : mcMesh.cells())
-                assert(bVisited[b.idx()]);
-#endif
-
-            for (bool forward : {false, true})
-            {
-                auto b = mcMesh.incident_cell(mcMesh.halfface_handle(pStart, forward));
-                auto n = nStart;
-                list<OVM::HalfEdgeHandle> halfpath;
-                // Find a path connecting nStart to nRoot and going through all the cells in the sequence
-                while (b != bRootAlt)
-                {
-                    auto bNext = cellTreePrecursorAlt[b.idx()];
-
-                    OVM::FaceHandle pInterface;
-                    for (auto hp : mcMesh.cell_halffaces(b))
-                        if (!_isCutPatch[mcMesh.face_handle(hp).idx()]
-                            && mcMesh.incident_cell(mcMesh.opposite_halfface_handle(hp)) == bNext)
-                        {
-                            pInterface = mcMesh.face_handle(hp);
-                            break;
-                        }
-                    set<OVM::VertexHandle> nsTarget;
-                    for (auto nTarget : mcMesh.face_vertices(pInterface))
-                        nsTarget.insert(nTarget);
-
-                    auto connector = pathThroughBlock(n, nsTarget, b);
-                    halfpath.insert(halfpath.end(), connector.begin(), connector.end());
-
-                    n = connector.empty() ? n : mcMesh.to_vertex_handle(connector.back());
-                    if (nsTarget.count(n) == 0)
-                        throw std::logic_error("Found vertex not in nsTarget");
-                    b = bNext;
-                }
-                auto connector = pathThroughBlock(n, {nRootAlt}, bRootAlt);
-                halfpath.insert(halfpath.end(), connector.begin(), connector.end());
-
-                if (forward)
-                {
-                    cycle.insert(cycle.end(), halfpath.begin(), halfpath.end());
-                }
-                else
-                {
-                    halfpath.reverse();
-                    for (auto ha : halfpath)
-                        cycle.emplace_back(mcMesh.opposite_halfedge_handle(ha));
-                }
-            }
-            if (mcMesh.from_vertex_handle(cycle.front()) != mcMesh.to_vertex_handle(cycle.back()))
-                throw std::logic_error("Unclosed cycle");
+            cycle = cycleThroughCutSurface(nStart, pStart, nRootAlt, bRootAlt, cellTreePrecursorAlt);
         }
     }
     return cycles;
 }
 
-list<OVM::HalfEdgeHandle> ConstraintExtractor::pathThroughBlock(const OVM::VertexHandle& nStart,
-                                                                const set<OVM::VertexHandle>& nsTarget,
-                                                                const OVM::CellHandle& b)
+list<HEH> ConstraintExtractor::pathThroughBlock(const VH& nStart, const set<VH>& nsTarget, const CH& b) const
 {
-    auto& mcMesh = _mcMeshPropsC.mesh;
+    auto& mcMesh = mcMeshProps().mesh();
 
-    bool incidentOnB = false;
-    for (auto b2 : mcMesh.vertex_cells(nStart))
-        if (b2 == b)
-            incidentOnB = true;
-    if (!incidentOnB)
-        throw std::logic_error("NStart Not incident on b");
-    for (auto n : nsTarget)
-    {
-        incidentOnB = false;
-        for (auto b2 : mcMesh.vertex_cells(n))
-            if (b2 == b)
-                incidentOnB = true;
-        if (!incidentOnB)
-            throw std::logic_error("Nstarget Not incident on b");
-    }
-
-    vector<OVM::HalfEdgeHandle> inHa(mcMesh.n_vertices(), OVM::HalfEdgeHandle(-1));
+    vector<HEH> inHa(mcMesh.n_vertices(), HEH(-1));
     vector<bool> nVisited(mcMesh.n_vertices(), false);
-    list<OVM::VertexHandle> nQ({nStart});
+    list<VH> nQ({nStart});
     nVisited[nStart.idx()] = true;
     while (!nQ.empty())
     {
-        auto n = nQ.front();
+        VH n = nQ.front();
         nQ.pop_front();
 
         if (nsTarget.count(n) != 0)
         {
-            list<OVM::HalfEdgeHandle> path;
-            auto nCurr = n;
+            list<HEH> path;
+            VH nCurr = n;
             while (nCurr != nStart)
             {
-                auto ha = inHa[nCurr.idx()];
+                HEH ha = inHa[nCurr.idx()];
                 path.push_front(ha);
                 nCurr = mcMesh.from_vertex_handle(ha);
             }
             return path;
         }
 
-        for (auto ha : mcMesh.outgoing_halfedges(n))
+        for (HEH ha : mcMesh.outgoing_halfedges(n))
         {
-            bool allowed = false;
-            for (auto bOther : mcMesh.halfedge_cells(ha))
-                if (bOther == b)
-                {
-                    allowed = true;
-                    break;
-                }
-            if (!allowed)
+            if (!contains(mcMesh.halfedge_cells(ha), b))
                 continue;
-            auto nTo = mcMesh.to_vertex_handle(ha);
+            VH nTo = mcMesh.to_vertex_handle(ha);
             if (!nVisited[nTo.idx()])
             {
                 inHa[nTo.idx()] = ha;
@@ -1065,23 +833,20 @@ list<OVM::HalfEdgeHandle> ConstraintExtractor::pathThroughBlock(const OVM::Verte
 }
 
 void ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
-                                                       list<OVM::CellHandle>& pathTets,
-                                                       const map<OVM::EdgeHandle, OVM::EdgeHandle>& e2parent,
-                                                       const map<OVM::FaceHandle, OVM::FaceHandle>& f2parent,
-                                                       const map<OVM::CellHandle, OVM::CellHandle>& tet2parent) const
+                                                       list<CH>& pathTets,
+                                                       const map<EH, EH>& e2parent,
+                                                       const map<FH, FH>& f2parent) const
 {
-    auto& tetMesh = _meshPropsC.mesh;
-
-    (void)tet2parent;
+    auto& tetMesh = meshProps().mesh();
 
     for (bool from : {true, false})
     {
         auto& v = from ? path.vFrom : path.vTo;
-        assert(_meshPropsC.get<MC_NODE>(v).is_valid());
-        if (_meshPropsC.get<IS_ORIGINAL_VTX>(v))
+        assert(meshProps().get<MC_NODE>(v).is_valid());
+        if (meshProps().get<IS_ORIGINAL_V>(v))
             continue;
 
-        ConstraintNodeType type = _constraintNodeType[_meshPropsC.get<MC_NODE>(v).idx()];
+        ConstraintNodeType type = _constraintNodeType[meshProps().get<MC_NODE>(v).idx()];
 
         assert(type != NATIVE);
         assert(type != NONE);
@@ -1089,15 +854,8 @@ void ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
         if (type == ARTIFICIAL_ON_LINK)
         {
             // Find original edge
-            OVM::EdgeHandle eSingular;
-            for (auto e : tetMesh.vertex_edges(v))
-            {
-                if (_meshPropsC.get<MC_ARC>(e).is_valid() && _mcMeshPropsC.get<IS_SINGULAR>(_meshPropsC.get<MC_ARC>(e)))
-                {
-                    eSingular = e;
-                    break;
-                }
-            }
+            EH eSingular
+                = findMatching(tetMesh.vertex_edges(v), [&](const EH& e) { return meshProps().get<IS_SINGULAR>(e); });
 
             // pave connection to pathTets start/end tets
             auto connector = connectingTetPath(
@@ -1117,21 +875,14 @@ void ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
             assert(eSingular.is_valid());
 
             // Snap to any vertex of original
-            assert(_meshPropsC.get<IS_ORIGINAL_VTX>(tetMesh.edge_vertices(eSingular)[0]));
+            assert(meshProps().get<IS_ORIGINAL_V>(tetMesh.edge_vertices(eSingular)[0]));
             v = tetMesh.edge_vertices(eSingular)[0];
         }
         else if (type == ARTIFICIAL_ON_BOUNDARY)
         {
             // Find original face
-            OVM::HalfFaceHandle hfBoundary;
-            for (auto hf : tetMesh.vertex_halffaces(v))
-            {
-                if (tetMesh.is_boundary(hf))
-                {
-                    hfBoundary = hf;
-                    break;
-                }
-            }
+            HFH hfBoundary
+                = findMatching(tetMesh.vertex_halffaces(v), [&](const HFH& hf) { return tetMesh.is_boundary(hf); });
 
             // pave connection to pathTets start/end tets
             auto connector = connectingTetPath(
@@ -1142,7 +893,7 @@ void ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
                 pathTets.insert(pathTets.end(), connector.begin(), connector.end());
 
             // Restore original
-            auto fBoundary = tetMesh.face_handle(hfBoundary);
+            FH fBoundary = tetMesh.face_handle(hfBoundary);
             auto it = f2parent.find(fBoundary);
             while (it != f2parent.end())
             {
@@ -1152,96 +903,73 @@ void ConstraintExtractor::determineEquivalentEndpoints(TetPathConstraint& path,
             assert(fBoundary.is_valid());
 
             // Snap to any vertex of original
-            assert(_meshPropsC.get<IS_ORIGINAL_VTX>(*tetMesh.fv_iter(fBoundary)));
+            assert(meshProps().get<IS_ORIGINAL_V>(*tetMesh.fv_iter(fBoundary)));
             v = *tetMesh.fv_iter(fBoundary);
         }
     }
 }
 
-void ConstraintExtractor::walkToMatchingTet(const OVM::EdgeHandle& e,
-                                            list<OVM::CellHandle>::iterator& itTet,
-                                            Transition& transOrigCurr) const
+void ConstraintExtractor::walkToMatchingTet(const EH& e, list<CH>::iterator& itTet, Transition& transOrigCurr) const
 {
-    auto& tetMesh = _meshPropsC.mesh;
-    bool hasHe = false;
-    for (auto e2 : tetMesh.cell_edges(*itTet))
-        if (e2 == e)
-        {
-            hasHe = true;
-            break;
-        }
-    list<OVM::CellHandle> connectingTets({*itTet});
+    auto& tetMesh = meshProps().mesh();
+    bool hasHe = contains(tetMesh.cell_edges(*itTet), e);
+    list<CH> connectingTets({*itTet});
     while (!hasHe)
     {
         itTet++;
         connectingTets.push_back({*itTet});
-        auto tetPost = *itTet;
-        for (auto e2 : tetMesh.cell_edges(tetPost))
-            if (e2 == e)
-            {
-                hasHe = true;
-                break;
-            }
+        CH tetPost = *itTet;
+        hasHe = contains(tetMesh.cell_edges(tetPost), e);
     }
     transOrigCurr = transOrigCurr.chain(transitionAlongPath(connectingTets));
 }
 
-std::pair<int, int> ConstraintExtractor::getBoundaryCoords(const OVM::CellHandle& tetStart,
-                                                           const OVM::VertexHandle& vConn,
-                                                           const Transition& transOrigCurr) const
+std::pair<int, int>
+ConstraintExtractor::getBoundaryCoords(const CH& tetStart, const VH& vConn, const Transition& transOrigCurr) const
 {
-    auto& tetMesh = _meshPropsC.mesh;
+    auto& tetMesh = meshProps().mesh();
 
     // Get direction of boundary normal
-    OVM::HalfFaceHandle boundaryHf;
+    HFH boundaryHf;
     vector<bool> tetVisited(tetMesh.n_cells(), false);
     forVertexNeighbourTetsInBlock(vConn,
                                   tetStart,
-                                  [&boundaryHf, vConn, &tetMesh](const OVM::CellHandle& tet)
+                                  [&boundaryHf, vConn, this](const CH& tet)
                                   {
-                                      for (auto hf : tetMesh.cell_halffaces(tet))
-                                      {
-                                          bool hasVConn = false;
-                                          for (auto v : tetMesh.halfface_vertices(hf))
-                                              if (v == vConn)
-                                              {
-                                                  hasVConn = true;
-                                                  break;
-                                              }
-                                          if (hasVConn && tetMesh.is_boundary(tetMesh.opposite_halfface_handle(hf)))
+                                      boundaryHf = findMatching(
+                                          meshProps().mesh().cell_halffaces(tet),
+                                          [&](const HFH& hf)
                                           {
-                                              boundaryHf = hf;
-                                              return true;
-                                          }
-                                      }
-                                      return false;
+                                              return contains(meshProps().mesh().halfface_vertices(hf), vConn)
+                                                     && meshProps().mesh().is_boundary(
+                                                         meshProps().mesh().opposite_halfface_handle(hf));
+                                          });
+                                      return boundaryHf.is_valid();
                                   });
     if (!boundaryHf.is_valid())
         throw std::logic_error("Artificial singular node that is not incident on a cyclic singularity");
     auto connectingTets = connectingTetPath(tetStart, boundaryHf, vConn);
     connectingTets.push_front(tetStart);
-    auto coord
+    int coord
         = toCoord(transOrigCurr.chain(transitionAlongPath(connectingTets)).invert().rotate(normalDirUVW(boundaryHf)));
     return {coord == 0 ? 1 : 0, coord == 2 ? 1 : 2};
 }
 
-int ConstraintExtractor::getCycleCoord(const OVM::CellHandle& tetStart,
-                                       const OVM::VertexHandle& vConn,
-                                       const Transition& transOrigCurr) const
+int ConstraintExtractor::getCycleCoord(const CH& tetStart, const VH& vConn, const Transition& transOrigCurr) const
 {
-    auto& tetMesh = _meshPropsC.mesh;
+    auto& tetMesh = meshProps().mesh();
 
     // Get direction of cycle
-    OVM::HalfEdgeHandle cycleHe;
-    OVM::CellHandle cycleTet;
+    HEH cycleHe;
+    CH cycleTet;
     vector<bool> tetVisited(tetMesh.n_cells(), false);
     forVertexNeighbourTetsInBlock(vConn,
                                   tetStart,
-                                  [&cycleHe, &cycleTet, vConn, &tetMesh, this](const OVM::CellHandle& tet)
+                                  [&cycleHe, &cycleTet, vConn, &tetMesh, this](const CH& tet)
                                   {
-                                      for (auto he : tetMesh.cell_halfedges(tet))
+                                      for (HEH he : tetMesh.cell_halfedges(tet))
                                       {
-                                          auto a = _meshPropsC.get<MC_ARC>(tetMesh.edge_handle(he));
+                                          EH a = meshProps().get<MC_ARC>(tetMesh.edge_handle(he));
                                           if (tetMesh.from_vertex_handle(he) == vConn && a.is_valid()
                                               && _arcIsCritical[a.idx()])
                                           {
@@ -1256,11 +984,11 @@ int ConstraintExtractor::getCycleCoord(const OVM::CellHandle& tetStart,
         throw std::logic_error("Artificial singular node that is not incident on a cyclic singularity");
     auto connectingTets = connectingTetPath(tetStart, cycleHe, vConn);
     connectingTets.push_front(tetStart);
-    auto& chartOrig = _meshPropsC.ref<CHART_ORIG>(cycleTet);
-    auto uvwOrig1 = chartOrig.at(_meshPropsC.mesh.from_vertex_handle(cycleHe));
-    auto uvwOrig2 = chartOrig.at(_meshPropsC.mesh.to_vertex_handle(cycleHe));
+    auto& chartOrig = meshProps().ref<CHART_ORIG>(cycleTet);
+    Vec3Q uvwOrig1 = chartOrig.at(meshProps().mesh().from_vertex_handle(cycleHe));
+    Vec3Q uvwOrig2 = chartOrig.at(meshProps().mesh().to_vertex_handle(cycleHe));
     return toCoord(
         transOrigCurr.chain(transitionAlongPath(connectingTets)).invert().rotate(toDir(uvwOrig1 - uvwOrig2)));
 }
 
-}; // namespace qgp3d
+}; // namespace mc3d
