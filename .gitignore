@@ -1,7 +1,6 @@
 /.vscode
 /build
-/build_rel
-/build_dbg
+/build*
 /Debug
 /RelWithDebInfo
 /Release*

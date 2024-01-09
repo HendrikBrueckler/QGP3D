@@ -9,10 +9,21 @@ if (NOT TARGET MC3D::MC3D)
 endif()
 list(APPEND QGP3D_LIB_LIST MC3D::MC3D)
 
-#gurobi #TODO free software alternative at some point
-find_package(Gurobi REQUIRED)
-list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiC)
-list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiCXX)
+#gurobi
+find_package(Gurobi)
+
+if (Gurobi_FOUND)
+  list(APPEND QGP3D_COMPILE_DEFINITIONS_PRV "QGP3D_WITH_GUROBI")
+  list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiC)
+  list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiCXX)
+else()
+  find_package(CBC REQUIRED)
+  find_package(BONMIN REQUIRED)
+  find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+  list(APPEND QGP3D_LIB_LIST_PRV Eigen3::Eigen)
+  list(APPEND QGP3D_LIB_LIST_PRV ${BONMIN_LIBRARIES})
+  list(APPEND QGP3D_LIB_LIST_PRV ${CBC_LIBRARIES})
+endif()
 
 ### Add all source files
 list(APPEND QGP3D_SOURCE_LIST
@@ -59,6 +70,13 @@ target_include_directories(QGP3D
                            PUBLIC
                            "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>"
                            "$<INSTALL_INTERFACE:${QGP3D_INSTALL_INCLUDE_DIR}>")
+
+if (NOT Gurobi_FOUND)
+  target_include_directories(QGP3D
+                             PRIVATE
+                             "$<BUILD_INTERFACE:${CBC_INCLUDE_DIRS}>"
+                             "$<BUILD_INTERFACE:${BONMIN_INCLUDE_DIRS}")
+endif()
 
 ### Link with dependencies
 target_link_libraries_system(QGP3D PUBLIC ${QGP3D_LIB_LIST})

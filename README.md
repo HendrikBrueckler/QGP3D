@@ -36,7 +36,9 @@ therefore often enforces defects in the output.
 
 ### Dependencies
 - GMP (NOT included, must be installed on your system)
-- GUROBI (NOT included, must be installed on your system)
+- GUROBI (NOT included, must be installed on your system), set GUROBI_BASE via cmake to point to correct folder
+    * OPEN-SOURCE-ALTERNATIVE: coinor-bonmin, including all its dependencies, namely coinutils, Ipopt (+HSL MA27/coinhsl), Osi, Cgl, Cbc, Clp (NOT included, must be installed on your system)
+    * This is automatically chosen if GUROBI could not be detected on your system
 - [MC3D](https://github.com/HendrikBrueckler/MC3D) (Included as submodule, together with all subdependencies)
 
 ### Building
@@ -73,7 +75,7 @@ qgp3d::Quantizer quantizer(tetMesh);
 for (auto tet: tetMesh.cells())
     for (auto v: tetMesh.cell_vertices(tet))
         quantizer.setParam(tet, v, param[tet][v]);
-        
+
 // isFeatureF, isFeatureE, isFeatureV: your properties marking features
 for (auto f: tetMesh.faces())
     if (isFeatureF[f])

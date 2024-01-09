@@ -1,7 +1,640 @@
 #include "QGP3D/MCQuantizer.hpp"
 
-#include <gurobi_c++.h>
 #include <queue>
+
+#define INDIVIDUAL_ARC_FACTOR 0.01
+#define TIME_LIMIT 1800
+
+#ifdef QGP3D_WITH_GUROBI
+
+#include <gurobi_c++.h>
+
+#else // QGP3D with bonmin#include "BonBonminSetup.hpp"
+
+#include "BonCbc.hpp"
+#include "BonIpoptSolver.hpp"
+#include "BonOsiTMINLPInterface.hpp"
+#include "BonTMINLP.hpp"
+
+#include "BonEcpCuts.hpp"
+#include "BonOACutGenerator2.hpp"
+#include "BonOaNlpOptim.hpp"
+
+#include "BonBonminSetup.hpp"
+
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <Eigen/Sparse>
+
+namespace impl
+{
+using namespace Ipopt;
+using namespace Bonmin;
+using namespace mc3d;
+using std::vector;
+
+class QuantizationProblem : public TMINLP
+{
+  private:
+    struct Constraint
+    {
+        Constraint(const vector<int>& vars_, const vector<double>& coeffs_, double rhs_, bool equality_)
+            : vars(vars_), coeffs(coeffs_), rhs(rhs_), equality(equality_)
+        {
+        }
+
+        vector<int> vars;
+        vector<double> coeffs;
+        double rhs;
+        bool equality;
+    };
+
+    bool _printSol;
+    double _scaling;
+    bool _allowZeros;
+    bool _allowNeg;
+    int n_nonzeros_jac;
+    int n_nonzeros_hess;
+    TetMeshProps& _meshProps;
+
+    vector<vector<double>> _hessianDense;
+    Eigen::VectorXd _objectiveLin;
+    Eigen::SparseMatrix<double> _hessianSparse;
+    double _objectiveBase;
+    vector<Constraint> _constraints;
+
+  public:
+    map<EH, int> _arc2idx;
+
+    void addConstraint(const vector<int>& vars, const vector<double>& coeffs, double rhs, bool equality)
+    {
+        _constraints.push_back({vars, coeffs, rhs, equality});
+    }
+
+    QuantizationProblem(TetMeshProps& meshProps, double scaling, bool allowZeros, bool allowNeg)
+        : _printSol(false), _scaling(scaling), _allowZeros(allowZeros), _allowNeg(allowNeg), _meshProps(meshProps)
+    {
+        auto& mcMeshProps = *_meshProps.get<MC_MESH_PROPS>();
+        // Construct all objective and constraint info here
+        auto& mc = mcMeshProps.mesh();
+
+        // 0. VARIABLES
+
+        // One integer length variable per arc
+        _arc2idx.clear();
+        for (EH arc : mc.edges())
+        {
+            int idx = _arc2idx.size();
+            _arc2idx[arc] = idx;
+        }
+
+        // 1. OBJECTIVE
+        _objectiveBase = 0.0;
+        _objectiveLin = Eigen::VectorXd(_arc2idx.size());
+        _objectiveLin.setZero();
+        _hessianDense = vector<vector<double>>(_arc2idx.size(), vector<double>(_arc2idx.size(), 0.0));
+        for (CH block : mc.cells())
+        {
+            for (UVWDir axis : {UVWDir::NEG_V_NEG_W, UVWDir::NEG_U_NEG_W, UVWDir::NEG_U_NEG_V})
+            {
+                vector<int> indices;
+                double lenSum = 0.0;
+                for (EH arc : mcMeshProps.ref<BLOCK_EDGE_ARCS>(block).at(axis))
+                {
+                    indices.push_back(_arc2idx.at(arc));
+                    lenSum += mcMeshProps.get<ARC_DBL_LENGTH>(arc);
+                }
+                for (int i = 0; i < indices.size(); i++)
+                {
+                    _objectiveLin[indices[i]] += -2 * lenSum * _scaling;
+                    _hessianDense[indices[i]][indices[i]] += 2;
+                    for (int j = i + 1; j < indices.size(); j++)
+                    {
+                        _hessianDense[indices[i]][indices[j]] += 2;
+                        _hessianDense[indices[j]][indices[i]] += 2;
+                    }
+                }
+                _objectiveBase += _scaling * lenSum * _scaling * lenSum;
+            }
+        }
+        for (EH arc : mc.edges())
+        {
+            int index = _arc2idx.at(arc);
+            double lenSum = mcMeshProps.get<ARC_DBL_LENGTH>(arc);
+            _objectiveLin[index] += -2 * lenSum * _scaling * INDIVIDUAL_ARC_FACTOR;
+            _hessianDense[index][index] += 2 * INDIVIDUAL_ARC_FACTOR;
+            _objectiveBase += _scaling * lenSum * _scaling * lenSum * INDIVIDUAL_ARC_FACTOR;
+        }
+        vector<Eigen::Triplet<double>> triplets;
+        for (int i = 0; i < _arc2idx.size(); i++)
+            for (int j = 0; j < _arc2idx.size(); j++)
+                if (_hessianDense[i][j] > 0)
+                    triplets.push_back({i, j, _hessianDense[i][j]});
+
+        _hessianSparse.resize(_arc2idx.size(), _arc2idx.size());
+        _hessianSparse.setFromTriplets(triplets.begin(), triplets.end());
+
+        // 2. CONSTRAINTS
+
+        _constraints.clear();
+
+        {
+            Eigen::MatrixXd equalityMatrix(2 * mc.n_logical_faces(), _arc2idx.size());
+            equalityMatrix.setZero();
+            int globalIdx = 0;
+            // Each patches opposite arc lengths must match
+            for (FH patch : mc.faces())
+            {
+                HFH hp = mc.halfface_handle(patch, 0);
+                if (mc.is_boundary(hp))
+                    hp = mc.opposite_halfface_handle(hp);
+
+                auto dir2orderedHas = MCMeshNavigator(_meshProps).halfpatchHalfarcsByDir(hp);
+                assert(dir2orderedHas.size() == 4);
+                UVWDir dirHpNormal = MCMeshNavigator(_meshProps).halfpatchNormalDir(hp);
+
+                for (UVWDir dirSide :
+                     decompose(~(dirHpNormal | -dirHpNormal), {UVWDir::POS_U, UVWDir::POS_V, UVWDir::POS_W}))
+                {
+                    UVWDir dirSideOpp = -dirSide;
+                    set<EH> esA;
+                    for (HEH ha : dir2orderedHas[dirSide])
+                        esA.insert(mc.edge_handle(ha));
+                    set<EH> esB;
+                    for (HEH ha : dir2orderedHas[-dirSide])
+                        esB.insert(mc.edge_handle(ha));
+                    if (esA == esB)
+                        continue;
+
+                    for (HEH ha : dir2orderedHas[dirSide])
+                        equalityMatrix(globalIdx, _arc2idx.at(mc.edge_handle(ha))) = 1;
+
+                    for (HEH ha : dir2orderedHas[-dirSide])
+                        equalityMatrix(globalIdx, _arc2idx.at(mc.edge_handle(ha))) = -1;
+
+                    globalIdx++;
+                }
+            }
+            Eigen::FullPivLU<Eigen::MatrixXd> decomp(equalityMatrix.transpose());
+            Eigen::MatrixXd image = decomp.image(equalityMatrix.transpose()).transpose();
+
+            for (int i = 0; i < image.rows(); i++)
+            {
+                vector<int> vars;
+                vector<double> coeffs;
+                for (int j = 0; j < image.cols(); j++)
+                {
+                    if (std::abs(image(i, j)) > 1e-6)
+                    {
+                        vars.push_back(j);
+                        coeffs.push_back(std::round(image(i, j)));
+                    }
+                }
+                _constraints.push_back({vars, coeffs, 0.0, true});
+            }
+        }
+
+        if (_allowNeg)
+        {
+            // Enforce no block with negative extension along any axis
+            for (CH b : mc.cells())
+            {
+                for (UVWDir dir : {UVWDir::POS_V_POS_W, UVWDir::POS_U_POS_W, UVWDir::POS_U_POS_V})
+                {
+                    vector<int> vars;
+                    vector<double> coeffs;
+                    auto& arcs = mcMeshProps.ref<BLOCK_EDGE_ARCS>(b).at(dir);
+                    for (EH a : arcs)
+                    {
+                        vars.push_back(_arc2idx.at(a));
+                        coeffs.push_back(1.0);
+                    }
+                    _constraints.push_back({vars, coeffs, 0.0, false});
+                }
+            }
+        }
+
+        // Enforce critical links of length >= 1
+        vector<MCMeshNavigator::CriticalLink> criticalLinks;
+        map<EH, int> a2criticalLinkIdx;
+        map<VH, vector<int>> n2criticalLinksOut;
+        map<VH, vector<int>> n2criticalLinksIn;
+
+        int nSeparationConstraints = 0;
+        MCMeshNavigator(_meshProps)
+            .getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
+
+        for (auto& criticalLink : criticalLinks)
+        {
+            if (criticalLink.pathHas.empty())
+                continue;
+
+            vector<int> vars;
+            vector<double> coeffs;
+            for (HEH ha : criticalLink.pathHas)
+            {
+                vars.push_back(_arc2idx.at(mc.edge_handle(ha)));
+                coeffs.push_back(1.0);
+            }
+
+            if (criticalLink.nFrom == criticalLink.nTo)
+                _constraints.push_back({vars, coeffs, 3.0, false});
+            else
+                _constraints.push_back({vars, coeffs, 1.0, false});
+            nSeparationConstraints++;
+        }
+
+        // Additional code to avoid selfadjacency
+        {
+            for (CH b : mc.cells())
+            {
+                auto& dir2ps = mcMeshProps.ref<BLOCK_FACE_PATCHES>(b);
+                for (auto& kv : dir2ps)
+                {
+                    if (isNeg(kv.first))
+                        continue;
+
+                    UVWDir dir = kv.first;
+                    auto& ps = kv.second;
+                    auto& psOpp = dir2ps.at(-dir);
+                    set<CH> bs, bsOpp;
+                    for (FH p : ps)
+                    {
+                        HFH hp = mc.halfface_handle(p, 0);
+                        if (mc.incident_cell(hp) == b)
+                            hp = mc.opposite_halfface_handle(hp);
+                        CH bNext = mc.incident_cell(hp);
+                        if (!bNext.is_valid())
+                            continue;
+                        bs.insert(bNext);
+                    }
+                    for (FH p : psOpp)
+                    {
+                        HFH hp = mc.halfface_handle(p, 0);
+                        if (mc.incident_cell(hp) == b)
+                            hp = mc.opposite_halfface_handle(hp);
+                        CH bNext = mc.incident_cell(hp);
+                        if (!bNext.is_valid())
+                            continue;
+                        bsOpp.insert(bNext);
+                    }
+                    bool mustBeNonZero = bs.count(b) != 0 || bsOpp.count(b) != 0 || containsSomeOf(bs, bsOpp);
+                    if (mustBeNonZero)
+                    {
+                        // Constrain non-zero length along dir
+                        vector<int> vars;
+                        vector<double> coeffs;
+                        auto& dir2as = mcMeshProps.ref<BLOCK_EDGE_ARCS>(b);
+                        for (EH a : dir2as.at(decompose(~(dir | -dir), DIM_2_DIRS)[0]))
+                        {
+                            vars.push_back(_arc2idx.at(a));
+                            coeffs.push_back(1.0);
+                        }
+                        _constraints.push_back({vars, coeffs, 1.0, false});
+                        nSeparationConstraints++;
+
+                        continue;
+                    }
+                }
+            }
+        }
+    }
+
+    void addConstraint(const Constraint& constraint)
+    {
+        _constraints.push_back(constraint);
+    }
+
+    /// virtual destructor.
+    virtual ~QuantizationProblem()
+    {
+    }
+
+    /** Copy constructor.*/
+    QuantizationProblem(const QuantizationProblem& other)
+        : _printSol(other._printSol), _scaling(other._scaling), _allowZeros(other._allowZeros),
+          _allowNeg(other._allowNeg), n_nonzeros_jac(other.n_nonzeros_jac), n_nonzeros_hess(other.n_nonzeros_hess),
+          _meshProps(other._meshProps), _hessianDense(other._hessianDense), _objectiveLin(other._objectiveLin),
+          _hessianSparse(other._hessianSparse), _objectiveBase(other._objectiveBase), _constraints(other._constraints),
+          _arc2idx(other._arc2idx)
+    {
+    }
+
+    /** Assignment operator. no data = nothing to assign*/
+    // QuantizationProblem& operator=(const QuantizationProblem&) {}
+
+    /** \name Overloaded functions specific to a TMINLP.*/
+    //@{
+    /** Pass the type of the variables (INTEGER, BINARY, CONTINUOUS) to the optimizer.
+       \param n size of var_types (has to be equal to the number of variables in the problem)
+    \param var_types types of the variables (has to be filled by function).
+    */
+    virtual bool get_variables_types(Ipopt::Index n, VariableType* var_types)
+    {
+        for (int i = 0; i < n; i++)
+            var_types[i] = INTEGER;
+        return true;
+    }
+
+    /** Pass info about linear and nonlinear variables.*/
+    virtual bool get_variables_linearity(Ipopt::Index n, Ipopt::TNLP::LinearityType* var_types)
+    {
+        for (int i = 0; i < n; i++)
+            var_types[i] = Ipopt::TNLP::NON_LINEAR;
+        return true;
+    }
+
+    /** Pass the type of the constraints (LINEAR, NON_LINEAR) to the optimizer.
+    \param m size of const_types (has to be equal to the number of constraints in the problem)
+    \param const_types types of the constraints (has to be filled by function).
+    */
+    virtual bool get_constraints_linearity(Ipopt::Index m, Ipopt::TNLP::LinearityType* const_types)
+    {
+        for (int i = 0; i < m; i++)
+            const_types[i] = Ipopt::TNLP::LINEAR;
+        return true;
+    }
+    //@}
+
+    /** \name Overloaded functions defining a TNLP.
+     * This group of function implement the various elements needed to define and solve a TNLP.
+     * They are the same as those in a standard Ipopt NLP problem*/
+    //@{
+    /** Method to pass the main dimensions of the problem to Ipopt.
+          \param n number of variables in problem.
+          \param m number of constraints.
+          \param nnz_jac_g number of nonzeroes in Jacobian of constraints system.
+          \param nnz_h_lag number of nonzeroes in Hessian of the Lagrangean.
+          \param index_style indicate wether arrays are numbered from 0 (C-style) or
+          from 1 (Fortran).
+          \return true in case of success.*/
+    virtual bool get_nlp_info(Ipopt::Index& n,
+                              Ipopt::Index& m,
+                              Ipopt::Index& nnz_jac_g,
+                              Ipopt::Index& nnz_h_lag,
+                              TNLP::IndexStyleEnum& index_style)
+    {
+        n = _arc2idx.size();
+
+        m = _constraints.size();
+
+        nnz_h_lag = 0;
+        for (int i = 0; i < _hessianSparse.outerSize(); ++i)
+            for (Eigen::SparseMatrix<double>::InnerIterator it(_hessianSparse, i); it; ++it)
+                if (it.row() >= it.col())
+                    ++nnz_h_lag;
+
+        int nNonZero = 0;
+        for (auto& constraint : _constraints)
+            nNonZero += constraint.vars.size();
+
+        nnz_jac_g = nNonZero;
+
+        index_style = TNLP::C_STYLE;
+        return true;
+    }
+
+    /** Method to pass the bounds on variables and constraints to Ipopt.
+         \param n size of x_l and x_u (has to be equal to the number of variables in the problem)
+         \param x_l lower bounds on variables (function should fill it).
+         \param x_u upper bounds on the variables (function should fill it).
+         \param m size of g_l and g_u (has to be equal to the number of constraints in the problem).
+         \param g_l lower bounds of the constraints (function should fill it).
+         \param g_u upper bounds of the constraints (function should fill it).
+    \return true in case of success.*/
+    virtual bool get_bounds_info(Ipopt::Index n, Number* x_l, Number* x_u, Ipopt::Index m, Number* g_l, Number* g_u)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            x_l[i] = (_allowNeg ? -DBL_MAX : (_allowZeros ? 0 : 1));
+            x_u[i] = DBL_MAX;
+        }
+        for (int i = 0; i < _constraints.size(); i++)
+        {
+            if (_constraints[i].equality)
+            {
+                g_l[i] = g_u[i] = _constraints[i].rhs;
+            }
+            else
+            {
+                g_l[i] = _constraints[i].rhs;
+                g_u[i] = DBL_MAX;
+            }
+        }
+        return true;
+    }
+
+    /** Method to to pass the starting point for optimization to Ipopt.
+      \param init_x do we initialize primals?
+      \param x pass starting primal points (function should fill it if init_x is 1).
+      \param m size of lambda (has to be equal to the number of constraints in the problem).
+      \param init_lambda do we initialize duals of constraints?
+      \param lambda lower bounds of the constraints (function should fill it).
+      \return true in case of success.*/
+    virtual bool get_starting_point(Ipopt::Index n,
+                                    bool init_x,
+                                    Number* x,
+                                    bool init_z,
+                                    Number* z_L,
+                                    Number* z_U,
+                                    Ipopt::Index m,
+                                    bool init_lambda,
+                                    Number* lambda)
+    {
+        auto& mcMeshProps = *_meshProps.get<MC_MESH_PROPS>();
+        if (mcMeshProps.isAllocated<ARC_INT_LENGTH>())
+            for (EH arc : mcMeshProps.mesh().edges())
+                x[_arc2idx.at(arc)] = mcMeshProps.get<ARC_INT_LENGTH>(arc);
+        else
+            for (EH arc : mcMeshProps.mesh().edges())
+                x[_arc2idx.at(arc)] = _scaling * mcMeshProps.get<ARC_DBL_LENGTH>(arc);
+
+        return true;
+    }
+
+    /** Method which compute the value of the objective function at point x.
+      \param n size of array x (has to be the number of variables in the problem).
+      \param x point where to evaluate.
+      \param new_x Is this the first time we evaluate functions at this point?
+      (in the present context we don't care).
+      \param obj_value value of objective in x (has to be computed by the function).
+      \return true in case of success.*/
+    virtual bool eval_f(Ipopt::Index n, const Number* x, bool new_x, Number& obj_value)
+    {
+        Eigen::Map<const Eigen::VectorXd> xd(x, n);
+        obj_value = 0.5 * xd.dot(_hessianSparse * xd) + _objectiveLin.dot(xd) + _objectiveBase;
+
+        // std::cout << "Eval f input " << xd.transpose() << std::endl;
+        // std::cout << "Eval f objectivelin " << _objectiveLin.transpose() << std::endl;
+        // std::cout << "Eval f objectivequad " << Eigen::MatrixXd(_hessianSparse) << std::endl;
+        // std::cout << "Eval f returned " << obj_value << std::endl;
+        // std::cout << "quad term: " << 0.5 * xd.dot(_hessianSparse * xd) << std::endl;
+        // std::cout << "lin term: " << _objectiveLin.dot(xd) << std::endl;
+        // std::cout << "base term: " << _objectiveBase << std::endl;
+        return true;
+    }
+
+    /** Method which compute the gradient of the objective at a point x.
+      \param n size of array x (has to be the number of variables in the problem).
+      \param x point where to evaluate.
+      \param new_x Is this the first time we evaluate functions at this point?
+      (in the present context we don't care).
+      \param grad_f gradient of objective taken in x (function has to fill it).
+      \return true in case of success.*/
+    virtual bool eval_grad_f(Ipopt::Index n, const Number* x, bool new_x, Number* grad_f)
+    {
+        Eigen::Map<const Eigen::VectorXd> xd(x, n);
+        Eigen::Map<Eigen::VectorXd> g(grad_f, n);
+        g = _hessianSparse * xd + _objectiveLin;
+        return true;
+    }
+
+    /** Method which compute the value of the functions defining the constraints at a point
+      x.
+      \param n size of array x (has to be the number of variables in the problem).
+      \param x point where to evaluate.
+      \param new_x Is this the first time we evaluate functions at this point?
+      (in the present context we don't care).
+      \param m size of array g (has to be equal to the number of constraints in the problem)
+      \param g values of the constraints (function has to fill it).
+      \return true in case of success.*/
+    virtual bool eval_g(Ipopt::Index n, const Number* x, bool new_x, Ipopt::Index m, Number* g)
+    {
+        for (int i = 0; i < _constraints.size(); i++)
+        {
+            g[i] = 0.0;
+            for (int j = 0; j < _constraints[i].vars.size(); j++)
+                g[i] += x[_constraints[i].vars[j]] * _constraints[i].coeffs[j];
+        }
+
+        return true;
+    }
+
+    /** Method to compute the Jacobian of the functions defining the constraints.
+      If the parameter values==NULL fill the arrays iCol and jRow which store the position of
+      the non-zero element of the Jacobian.
+      If the paramenter values!=NULL fill values with the non-zero elements of the Jacobian.
+      \param n size of array x (has to be the number of variables in the problem).
+      \param x point where to evaluate.
+      \param new_x Is this the first time we evaluate functions at this point?
+      (in the present context we don't care).
+      \return true in case of success.*/
+    virtual bool eval_jac_g(Ipopt::Index n,
+                            const Number* x,
+                            bool new_x,
+                            Ipopt::Index m,
+                            Ipopt::Index nele_jac,
+                            Ipopt::Index* iRow,
+                            Ipopt::Index* jCol,
+                            Number* values)
+    {
+        if (values == nullptr)
+        {
+            int gi = 0;
+            for (int i = 0; i < _constraints.size(); i++)
+            {
+                for (int j = 0; j < _constraints[i].vars.size(); j++)
+                {
+                    iRow[gi] = i;
+                    jCol[gi] = _constraints[i].vars[j];
+                    gi++;
+                }
+            }
+        }
+        else
+        {
+            int gi = 0;
+            for (int i = 0; i < _constraints.size(); i++)
+            {
+                for (int j = 0; j < _constraints[i].vars.size(); j++)
+                {
+                    values[gi] = _constraints[i].coeffs[j];
+                    gi++;
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Method to compute the Jacobian of the functions defining the constraints.
+      If the parameter values==NULL fill the arrays iCol and jRow which store the position of
+      the non-zero element of the Jacobian.
+      If the paramenter values!=NULL fill values with the non-zero elements of the Jacobian.
+      \param n size of array x (has to be the number of variables in the problem).
+      \param x point where to evaluate.
+      \param new_x Is this the first time we evaluate functions at this point?
+      (in the present context we don't care).
+      \param m size of array g (has to be equal to the number of constraints in the problem)
+      \param grad_f values of the constraints (function has to fill it).
+      \return true in case of success.*/
+    virtual bool eval_h(Ipopt::Index n,
+                        const Number* x,
+                        bool new_x,
+                        Number obj_factor,
+                        Ipopt::Index m,
+                        const Number* lambda,
+                        bool new_lambda,
+                        Ipopt::Index nele_hess,
+                        Ipopt::Index* iRow,
+                        Ipopt::Index* jCol,
+                        Number* values)
+    {
+        if (values == NULL)
+        {
+            int gi = 0;
+            for (int i = 0; i < _hessianSparse.outerSize(); ++i)
+                for (Eigen::SparseMatrix<double>::InnerIterator it(_hessianSparse, i); it; ++it)
+                {
+                    if (it.row() >= it.col())
+                    {
+                        iRow[gi] = it.row();
+                        jCol[gi] = it.col();
+                        ++gi;
+                    }
+                }
+        }
+        else
+        {
+            int gi = 0;
+            for (int i = 0; i < _hessianSparse.outerSize(); ++i)
+                for (Eigen::SparseMatrix<double>::InnerIterator it(_hessianSparse, i); it; ++it)
+                {
+                    if (it.row() >= it.col())
+                    {
+                        values[gi] = obj_factor * it.value();
+                        ++gi;
+                    }
+                }
+        }
+        return true;
+    }
+
+    /** Method called by Ipopt at the end of optimization.*/
+    virtual void finalize_solution(TMINLP::SolverReturn status, Ipopt::Index n, const Number* x, Number obj_value)
+    {
+        // Maybe print some interesting stuff here?
+        DLOG(INFO) << "Problem status: " << status;
+        DLOG(INFO) << "Objective value: " << obj_value;
+    }
+
+    //@}
+
+    virtual const SosInfo* sosConstraints() const
+    {
+        return NULL;
+    }
+    virtual const BranchingInfo* branchingInfo() const
+    {
+        return NULL;
+    }
+
+    void printSolutionAtEndOfAlgorithm()
+    {
+        _printSol = true;
+    }
+};
+} // namespace impl
+#endif
 
 namespace qgp3d
 {
@@ -23,33 +656,46 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
     const MCMesh& mc = mcMeshProps().mesh();
     const TetMesh& mesh = meshProps().mesh();
 
+    bool wasAllocated = mcMeshProps().isAllocated<ARC_DBL_LENGTH>();
+    if (!wasAllocated)
+        mcMeshProps().allocate<ARC_DBL_LENGTH>(0.0);
+    if (!wasAllocated)
+    {
+        for (EH arc : mc.edges())
+        {
+            // Determine current arc length
+            double length = 0.0;
+            for (HEH he : mcMeshProps().ref<ARC_MESH_HALFEDGES>(arc))
+                length += edgeLengthUVW<CHART>(mesh.edge_handle(he));
+            mcMeshProps().set<ARC_DBL_LENGTH>(arc, length);
+        }
+    }
+
+    vector<CriticalLink> criticalLinks;
+    map<EH, int> a2criticalLinkIdx;
+    map<VH, vector<int>> n2criticalLinksOut;
+    map<VH, vector<int>> n2criticalLinksIn;
+    getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
+
     try
     {
+#ifdef QGP3D_WITH_GUROBI
         GRBEnv env = GRBEnv(true);
 #ifdef NDEBUG
         env.set(GRB_IntParam_LogToConsole, false);
 #endif
-        env.set(GRB_DoubleParam_TimeLimit, 5 * 60);
+        env.set(GRB_DoubleParam_TimeLimit, TIME_LIMIT);
+        env.set(GRB_IntParam_Threads, 1);
         env.start();
 
         GRBModel model = GRBModel(env);
 
-        bool wasAllocated = mcMeshProps().isAllocated<ARC_DBL_LENGTH>();
-        if (!wasAllocated)
-            mcMeshProps().allocate<ARC_DBL_LENGTH>(0.0);
         // One integer length variable per arc
         std::map<EH, GRBVar> arc2var;
         for (EH arc : mc.edges())
         {
-            if (!wasAllocated)
-            {
-                // Determine current arc length
-                double length = 0.0;
-                for (HEH he : mcMeshProps().ref<ARC_MESH_HALFEDGES>(arc))
-                    length += edgeLengthUVW<CHART>(mesh.edge_handle(he));
-                mcMeshProps().set<ARC_DBL_LENGTH>(arc, length);
-            }
             double length = mcMeshProps().get<ARC_DBL_LENGTH>(arc);
+            DLOG(INFO) << "Arc " << arc << " continuous length: " << length;
 
             // Configure gurobi var
             GRBVar x = model.addVar(allowZero ? (allowNegative ? -GRB_INFINITY : 0.0) : 0.9,
@@ -61,8 +707,8 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
             arc2var[arc] = {x};
         }
 
-        GRBQuadExpr objective = 0.;
         // Objective Function minimizes deviation from scaled seamless param
+        GRBQuadExpr objective = 0.;
         for (CH block : mc.cells())
         {
             // For each axis U/V/W
@@ -79,6 +725,12 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 }
                 objective += (varSum - scaling * lenSum) * (varSum - scaling * lenSum);
             }
+        }
+        for (EH arc : mc.edges())
+        {
+            GRBVar var = arc2var.at(arc);
+            double len = mcMeshProps().get<ARC_DBL_LENGTH>(arc);
+            objective += (var - scaling * len) * (var - scaling * len) * INDIVIDUAL_ARC_FACTOR;
         }
 
         model.setObjective(objective, GRB_MINIMIZE);
@@ -100,11 +752,11 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 UVWDir dirSideOpp = -dirSide;
 
                 GRBLinExpr side = 0;
-                for (HEH ha : dir2orderedHas.at(dirSide))
+                for (HEH ha : dir2orderedHas[dirSide])
                     side += arc2var.at(mc.edge_handle(ha));
 
                 GRBLinExpr sideOpp = 0;
-                for (HEH ha : dir2orderedHas.at(-dirSide))
+                for (HEH ha : dir2orderedHas[-dirSide])
                     sideOpp += arc2var.at(mc.edge_handle(ha));
 
                 std::string constraintName = "Patch" + std::to_string(patch.idx()) + "dir"
@@ -132,13 +784,8 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
         }
 
         // Enforce critical links of length >= 1
-        vector<CriticalLink> criticalLinks;
-        map<EH, int> a2criticalLinkIdx;
-        map<VH, vector<int>> n2criticalLinksOut;
-        map<VH, vector<int>> n2criticalLinksIn;
 
         int nSeparationConstraints = 0;
-        getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
 
         for (auto& criticalLink : criticalLinks)
         {
@@ -190,8 +837,7 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                             continue;
                         bsOpp.insert(bNext);
                     }
-                    bool mustBeNonZero = bs.count(b) != 0 || bsOpp.count(b) != 0
-                                         || containsSomeOf(bs, bsOpp);
+                    bool mustBeNonZero = bs.count(b) != 0 || bsOpp.count(b) != 0 || containsSomeOf(bs, bsOpp);
                     if (mustBeNonZero)
                     {
                         // Constrain non-zero length along dir
@@ -208,12 +854,55 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 }
             }
         }
+#else
+        Ipopt::SmartPtr<impl::QuantizationProblem> iqp
+            = new impl::QuantizationProblem(meshProps(), scaling, allowZero, allowNegative);
+
+        Bonmin::BonminSetup bonmin;
+        bonmin.initializeOptionsAndJournalist();
+        bonmin.options()->SetNumericValue("bonmin.time_limit", TIME_LIMIT); // changes bonmin's time limit
+
+        // Problem properties
+        bonmin.options()->SetBoolValue("hessian_constant", true);
+        bonmin.options()->SetBoolValue("jac_c_constant", true);
+        bonmin.options()->SetBoolValue("jac_d_constant", true);
+        bonmin.options()->SetBoolValue("expect_infeasible_problem", false);
+        bonmin.options()->SetStringValue("expect_infeasible_problem", "no");
+
+        // Finetuning
+        bonmin.options()->SetStringValue("algorithm", "B-BB");
+        bonmin.options()->SetStringValue("mu_oracle", "loqo");
+        bonmin.options()->SetStringValue("nlp_failure_behavior", "fathom"); // default
+        bonmin.options()->SetStringValue("node_comparison", "best-bound");  // default
+        bonmin.options()->SetStringValue("variable_selection",
+                                         "qp-strong-branching");   // default: strong-branching
+        bonmin.options()->SetStringValue("nlp_solver", "Ipopt");   // default
+        bonmin.options()->SetStringValue("warm_start", "optimum"); // default: none
+
+        // Tolerances
+        // bonmin.options()->SetNumericValue("allowable_fraction_gap", 1e-3); // obj considered optimal if gap small
+        bonmin.options()->SetNumericValue("integer_tolerance", 1e-3);
+
+#ifdef NDEBUG
+        bonmin.options()->SetIntegerValue("lp_log_level", 0);
+        bonmin.options()->SetIntegerValue("nlp_log_level", 0);
+        bonmin.options()->SetIntegerValue("bb_log_level", 0);
+        bonmin.options()->SetIntegerValue("print_level", 0);
+#endif
+        bonmin.initialize(iqp);
+#ifdef NDEBUG
+        bonmin.continuousSolver()->messageHandler()->setLogLevel(0);
+        bonmin.nonlinearSolver()->messageHandler()->setLogLevel(0);
+#endif
+#endif
 
         int iter = 0;
+        double bestObj = 0.0;
         // Iteratively enforce violated separation constraints
         bool validSolution = false;
         while (!validSolution)
         {
+#ifdef QGP3D_WITH_GUROBI
             DLOG(INFO) << "Gurobi solving with " << nSeparationConstraints << " nonzero sum constraints";
             model.optimize();
             auto obj = model.getObjective();
@@ -226,12 +915,33 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 LOG(ERROR) << "Bad status return by GUROBI solver";
                 return SOLVER_ERROR;
             }
+            bestObj = model.getObjective().getValue();
             mcMeshProps().allocate<ARC_INT_LENGTH>();
             for (EH arc : mc.edges())
             {
                 auto& grbvar = arc2var.at(arc);
                 mcMeshProps().set<ARC_INT_LENGTH>(arc, (int)std::round(grbvar.get(GRB_DoubleAttr_X)));
             }
+#else
+
+            Bonmin::Bab bb;
+            bb(bonmin);
+
+            bestObj = bb.bestObj();
+            DLOG(INFO) << "Solved with final objective value of " << bestObj;
+            iter++;
+
+            int status = bb.mipStatus();
+            if (status != Bonmin::Bab::FeasibleOptimal && status != Bonmin::Bab::Feasible)
+            {
+                LOG(ERROR) << "Bad status return by Bonmin solver";
+                return SOLVER_ERROR;
+            }
+            auto solution = bb.bestSolution();
+            mcMeshProps().allocate<ARC_INT_LENGTH>();
+            for (EH arc : mc.edges())
+                mcMeshProps().set<ARC_INT_LENGTH>(arc, (int)std::round(solution[iqp->_arc2idx.at(arc)]));
+#endif
 
             int minArcLength = 10000;
             for (EH a : mc.edges())
@@ -273,6 +983,7 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                 for (auto& aColl : forcedNonZeroSum)
                 {
                     assert(!aColl.empty());
+#ifdef QGP3D_WITH_GUROBI
                     vector<GRBVar> vars;
                     vector<double> coeff;
                     for (auto sign2a : aColl)
@@ -286,6 +997,17 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
                     std::string constraintName = "Separation" + std::to_string(nSeparationConstraints);
                     model.addConstr(sumExpr, GRB_GREATER_EQUAL, 0.9, constraintName);
                     nSeparationConstraints++;
+#else
+                    vector<int> vars;
+                    vector<double> coeffs;
+                    for (auto sign2a : aColl)
+                    {
+                        vars.push_back(iqp->_arc2idx.at(sign2a.second));
+                        coeffs.push_back(sign2a.first);
+                    }
+                    iqp->addConstraint(vars, coeffs, 1.0, false);
+                    bonmin.nonlinearSolver()->setModel(iqp);
+#endif
                 }
                 if (!validSolution)
                 {
@@ -298,8 +1020,10 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
         for (EH a : mc.edges())
             minArcLength = std::min(minArcLength, mcMeshProps().get<ARC_INT_LENGTH>(a));
         int nHexes = numHexesInQuantization();
-        LOG(INFO) << "Quantized MC, nHexes: " << nHexes << ", objective: " << model.getObjective().getValue()
-                  << ", iterations: " << iter << ", minArcLength " << minArcLength;
+
+        LOG(INFO) << "Quantized MC, nHexes: " << nHexes << ", objective: " << bestObj << ", iterations: " << iter
+                  << ", minArcLength " << minArcLength;
+#ifdef QGP3D_WITH_GUROBI
     }
     catch (GRBException e)
     {
@@ -307,6 +1031,14 @@ MCQuantizer::RetCode MCQuantizer::quantizeArcLengths(double scaling, bool allowZ
         LOG(ERROR) << "Gurobi error message: " << e.getMessage();
         return SOLVER_ERROR;
     }
+#else
+    }
+    catch (...)
+    {
+        LOG(ERROR) << "Bonmin exception";
+        return SOLVER_ERROR;
+    }
+#endif
 
     return SUCCESS;
 }
@@ -871,4 +1603,4 @@ bool MCQuantizer::checkP0Containment(const WeaklyMonotonousPath& pathCurrent) co
                        pathCurrent.delta + n2displacement.at(nMax));
 }
 
-} // namespace mc3d
+} // namespace qgp3d
