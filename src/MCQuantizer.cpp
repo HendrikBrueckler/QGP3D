@@ -3,7 +3,7 @@
 #include <queue>
 
 #define INDIVIDUAL_ARC_FACTOR 0.01
-#define TIME_LIMIT 1800
+#define TIME_LIMIT 600
 
 #ifdef QGP3D_WITH_GUROBI
 

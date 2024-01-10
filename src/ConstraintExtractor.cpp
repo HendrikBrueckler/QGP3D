@@ -604,7 +604,7 @@ bool ConstraintExtractor::buildBlockSpanningTree(VH& nRoot,
                     // process cell
                     bVisited[bNext.idx()] = true;
                     bQ.push_back(bNext);
-                    _cellTreePrecursor[bNext.idx()] = b;
+                    cellTreePrecursor[bNext.idx()] = b;
                 }
             }
         }
