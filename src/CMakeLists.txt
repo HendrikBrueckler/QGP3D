@@ -75,7 +75,7 @@ if (NOT Gurobi_FOUND)
   target_include_directories(QGP3D
                              PRIVATE
                              "$<BUILD_INTERFACE:${CBC_INCLUDE_DIRS}>"
-                             "$<BUILD_INTERFACE:${BONMIN_INCLUDE_DIRS}")
+                             "$<BUILD_INTERFACE:${BONMIN_INCLUDE_DIRS}>")
 endif()
 
 ### Link with dependencies
