@@ -1,3 +1,8 @@
+# Coming soon!
+Integration of the implementation for our new paper [Integer-Sheet-Pump Quantization for Hexahedral Meshing \[Brückler et al. 2024\]](https://diglib.eg.org/bitstream/handle/10.1111/cgf15131/v43i5_04_cgf15131.pdf) (SGP 2024), for large speedups in quantization computation!
+
+***
+
 ![teaser](https://user-images.githubusercontent.com/38473042/167678103-ce292271-4962-4726-98c0-ea6cf376eb98.png)
 
 # QGP3D – Quantized Global Parametrization of Volumes
