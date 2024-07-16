@@ -25,7 +25,8 @@ void ClpLPSolver::setupLPBase()
         model.setLogLevel(0);
 #endif
 
-        DLOG(INFO) << "Creating " << _decomp.subproblem2bundles[subproblem].size() * 2 << " variables for subproblem " << subproblem;
+        DLOG(INFO) << "Creating " << _decomp.subproblem2bundles[subproblem].size() * 2 << " variables for subproblem "
+                   << subproblem;
         model.resize(0, 2 * _decomp.subproblem2bundles[subproblem].size());
         int currentIndex = 0;
 
@@ -49,24 +50,24 @@ void ClpLPSolver::setupLPBase()
             HFH hp0 = mcMesh.halfface_handle(p, 0);
             UVWDir dir = decompose(kv.second, DIM_1_DIRS)[0];
 
-            auto& side2has = _decomp.hp2hasByDir[hp0];
-            if (side2has[dir].size() == 1 && side2has[-dir].size() == 1
-                && _decomp.arc2bundle[mcMesh.edge_handle(side2has[dir].front())]
-                       == _decomp.arc2bundle[mcMesh.edge_handle(side2has[-dir].front())])
+            auto& side2has = _decomp.hp2hasByDir.at(hp0);
+            if (side2has.at(dir).size() == 1 && side2has.at(-dir).size() == 1
+                && _decomp.arc2bundle.at(mcMesh.edge_handle(side2has.at(dir).front()))
+                       == _decomp.arc2bundle.at(mcMesh.edge_handle(side2has.at(-dir).front())))
                 continue;
 
             vector<int> vars;
             vector<double> coeffs;
             for (UVWDir side : {dir, -dir})
-                for (HEH ha : side2has[side])
-                    // if (asVisited.count(mcMesh.edge_handle(ha)) != 0)
-                    {
-                        auto& varPair = _subproblem2bundle2vars[subproblem].at(_decomp.arc2bundle[mcMesh.edge_handle(ha)]);
-                        vars.push_back(varPair.first);
-                        coeffs.push_back(side == dir ? 1.0 : -1.0);
-                        vars.push_back(varPair.second);
-                        coeffs.push_back(side == dir ? -1.0 : 1.0);
-                    }
+                for (HEH ha : side2has.at(side))
+                // if (asVisited.count(mcMesh.edge_handle(ha)) != 0)
+                {
+                    auto& varPair = _subproblem2bundle2vars[subproblem].at(_decomp.arc2bundle.at(mcMesh.edge_handle(ha)));
+                    vars.push_back(varPair.first);
+                    coeffs.push_back(side == dir ? 1.0 : -1.0);
+                    vars.push_back(varPair.second);
+                    coeffs.push_back(side == dir ? -1.0 : 1.0);
+                }
 
             model.addRow(vars.size(), vars.data(), coeffs.data(), 0.0, 0.0);
         }

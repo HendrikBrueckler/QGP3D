@@ -12,6 +12,8 @@
 #include "BonBonminSetup.hpp"
 #include "BonTMINLP.hpp"
 
+#include <MC3D/Mesh/MCMeshManipulator.hpp>
+
 #include "QGP3D/IQP/BaseIQPSolver.hpp"
 
 namespace qgp3d

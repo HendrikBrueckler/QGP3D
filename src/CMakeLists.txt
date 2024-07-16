@@ -22,7 +22,7 @@ else()
   list(APPEND QGP3D_LIB_LIST_PRV ${CLP_LIBRARIES})
   find_package(CBC)
   find_package(BONMIN)
-  if (NOT CBC_FOUND OR NOT BONMIN_FOUND OR TRUE)
+  if (NOT CBC_FOUND OR NOT BONMIN_FOUND)
     message("QGP3D: Compiling without IQP solver support, only heuristic solver")
     list(APPEND QGP3D_COMPILE_DEFINITIONS_PUB "QGP3D_WITHOUT_IQP")
   else()
@@ -94,10 +94,16 @@ target_include_directories(QGP3D
                            "$<INSTALL_INTERFACE:${QGP3D_INSTALL_INCLUDE_DIR}>")
 
 if (NOT Gurobi_FOUND)
-  target_include_directories(QGP3D SYSTEM
-                             PRIVATE
-                             "$<BUILD_INTERFACE:${CBC_INCLUDE_DIRS}>"
-                             "$<BUILD_INTERFACE:${BONMIN_INCLUDE_DIRS}>")
+  if (NOT CBC_FOUND OR NOT BONMIN_FOUND)
+    target_include_directories(QGP3D SYSTEM
+                              PRIVATE
+                              "$<BUILD_INTERFACE:${CLP_INCLUDE_DIRS}>")
+  else()
+    target_include_directories(QGP3D SYSTEM
+                               PRIVATE
+                               "$<BUILD_INTERFACE:${CBC_INCLUDE_DIRS}>"
+                               "$<BUILD_INTERFACE:${BONMIN_INCLUDE_DIRS}>")
+  endif()
 endif()
 
 ### Link with dependencies
@@ -110,11 +116,10 @@ set_target_properties(QGP3D PROPERTIES
                       DEBUG_POSTFIX "d"
                       VERSION ${${PROJECT_NAME}_VERSION_MAJOR}.${${PROJECT_NAME}_VERSION_MINOR}
                       SOVERSION ${${PROJECT_NAME}_VERSION_MAJOR}.${${PROJECT_NAME}_VERSION_MINOR}
-                      PUBLIC_HEADER "${QGP3D_HEADER_LIST}"
                       CXX_STANDARD 17
                       CXX_STANDARD_REQUIRED ON)
 # compile options
-list(APPEND QGP3D_COMPILE_OPTIONS_PRV "-Wall" "-Wextra" "-Wshadow" "-Wunused" "-Wunused-function" "-Werror")
+list(APPEND QGP3D_COMPILE_OPTIONS_PRV "-Wall" "-Wextra" "-Wshadow" "-Wunused" "-Wunused-function")
 target_compile_options(QGP3D PRIVATE ${QGP3D_COMPILE_OPTIONS_PRV})
 # preprocessor defines
 if (NOT QGP3D_ENABLE_LOGGING)
