@@ -1,5 +1,5 @@
+![new-teaser](https://github.com/user-attachments/assets/16685400-3697-4d6b-86d7-cf831515749d)
 
-![alt text](new-teaser.png)
 # Integer-Sheet-Pump Quantization now integrated into QGP3D!
 An implementation of our new paper [Integer-Sheet-Pump Quantization for Hexahedral Meshing](https://diglib.eg.org/bitstream/handle/10.1111/cgf15131/v43i5_04_cgf15131.pdf) (presented at SGP 2024) has been integrated recently, enabling large speedups in quantization computation, and the possibility to drop the cumbersome dependency on integer solvers!
 
@@ -43,10 +43,9 @@ you can use one of the following bibtex snippets:
 It then constructs a valid quantization of the non-conforming partition, that is an assignment of integer lengths to the partition's edges, and deduces optimal integer spacings
 between all crucial entities like singularities and boundaries from this.
 We guarantee that these spacings, when used as constraints in reparametrization, permit the construction of a globally valid integer-grid-map parametrization
-from which a hex mesh without defects can be extracted. Greedy rounding, the previous state-of-the-art approach for quantization, can not provide this guarantee and
-therefore often enforces defects in the output.
+from which a hex mesh without defects can be extracted. Greedy rounding, the previous state-of-the-art approach for quantization, can not provide this guarantee and therefore often enforces defects in the output.
 
-![pipeline](pipeline.png)
+![pipeline](https://github.com/user-attachments/assets/3ec7a743-cf7b-4640-8ce4-daff564b654a)
 
 ***
 
