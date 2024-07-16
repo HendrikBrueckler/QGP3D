@@ -11,7 +11,8 @@
 
 #include <QGP3D/ConstraintExtractor.hpp>
 #include <QGP3D/ConstraintWriter.hpp>
-#include <QGP3D/MCQuantizer.hpp>
+#include <QGP3D/IQP/IQPQuantizer.hpp>
+#include <QGP3D/ISP/ISPQuantizer.hpp>
 
 #include <QGP3D/Quantizer.hpp>
 
@@ -45,7 +46,6 @@ int main(int argc, char** argv)
     bool reduceSingularWalls = false;
     bool exactOutput = false;
     bool forceSanitization = false;
-    bool simulateFeatures = false;
 
     double scaling = 0.0;
     std::string constraintFile = "";
@@ -77,7 +77,12 @@ int main(int argc, char** argv)
                    constraintFile,
                    "Set this string to generate a quantization constraint file (optional)");
     app.add_option("--scaling", scaling, "Set scaling factor for quantization");
-    app.add_flag("--simulate-features", simulateFeatures, "");
+#ifndef QGP3D_WITHOUT_IQP
+    int iqpTimeLimit = 180;
+    app.add_option("--iqp-time-limit",
+                   iqpTimeLimit,
+                   "Time limit for quantization IQP solvers in seconds. 0 disables use of IQP solvers.");
+#endif
 
     // Parse cli options
     try
@@ -188,7 +193,12 @@ int main(int argc, char** argv)
 
     if (!constraintFile.empty())
     {
-        ASSERT_SUCCESS("Quantization", MCQuantizer(meshProps).quantizeArcLengths(scaling, true, true));
+        SeparationChecker sep(meshProps);
+        ASSERT_SUCCESS("Quantization (Greedy)", ISPQuantizer(meshProps, sep).quantize(scaling, -DBL_MAX));
+#ifndef QGP3D_WITHOUT_IQP
+        if (iqpTimeLimit > 0)
+            ASSERT_SUCCESS("Quantization (Exact)", IQPQuantizer(meshProps, sep).quantize(scaling, -DBL_MAX, iqpTimeLimit));
+#endif
         ASSERT_SUCCESS("Writing constraints", ConstraintWriter(meshProps, constraintFile).writeTetPathConstraints());
     }
 

@@ -1,43 +1,24 @@
-#ifndef QGP3D_MCQUANTIZER_HPP
-#define QGP3D_MCQUANTIZER_HPP
+#ifndef QGP3D_SEPARATIONCHECKER_HPP
+#define QGP3D_SEPARATIONCHECKER_HPP
 
-#include <MC3D/Mesh/MCMeshManipulator.hpp>
+#include <MC3D/Mesh/MCMeshNavigator.hpp>
 
 namespace qgp3d
 {
 using namespace mc3d;
 
 /**
- * @brief Class to manage the quantization of the MC and its arc lengths.
- *        First step towards an IGM.
- *
+ * @brief Class handling separation in a quantization
  */
-class MCQuantizer : public virtual MCMeshManipulator
+class SeparationChecker : public virtual MCMeshNavigator
 {
   public:
-    enum RetCode
-    {
-        SUCCESS = 0,
-        SOLVER_ERROR = 20,
-    };
-
     /**
-     * @brief Create an instance that manages the quantization of the MC associated with \p meshProps
+     * @brief Create new instance checking the separation of singularities, boundaries and features in a quantization
      *
-     * @param meshProps IN/OUT: mesh whose MC should be quantized
+     * @param meshProps IN: mesh with quantized MC
      */
-    MCQuantizer(TetMeshProps& meshProps);
-
-    /**
-     * @brief Actually assign quantized consistent arc lengths to each arc in the MC.
-     *        \p scaling determines the objective function, which tries to minimize
-     *        |origLength * scaling - quantizedLength|^2
-     *
-     * @param scaling IN: relative factor by which to approximately scale the original arc lengths
-     * @param allowZero IN: whether to allow 0-length arcs
-     * @return RetCode SUCCESS or SOLVER_ERROR
-     */
-    RetCode quantizeArcLengths(double scaling, bool allowZero = false, bool allowNegative = false);
+    SeparationChecker(TetMeshProps& meshProps);
 
     /**
      * @brief Count the number of hex cells in a mesh extractable from a quantized parametrization
@@ -52,8 +33,8 @@ class MCQuantizer : public virtual MCMeshManipulator
      */
     struct WeaklyMonotonousPath
     {
-        VH n;  // Current node
-        UVWDir dirs1;         // Direction of extension of source
+        VH n;         // Current node
+        UVWDir dirs1; // Direction of extension of source
 
         map<UVWDir, vector<EH>> dir2walkedArcs;
         vector<HEH> path;
@@ -97,11 +78,32 @@ class MCQuantizer : public virtual MCMeshManipulator
      *                            lengths (including sign) may not be 0.
      * @return RetCode SUCCESS or error code
      */
-    RetCode findSeparationViolatingPaths(const vector<CriticalLink>& criticalLinks,
-                                         const vector<bool>& arcIsCritical,
-                                         const vector<bool>& nodeIsCritical,
-                                         const vector<bool>& patchIsCritical,
-                                         vector<vector<std::pair<int, EH>>>& nonZeroSumArcs) const;
+    void findSeparationViolatingPaths(vector<CriticalLink>& criticalLinks,
+                                      const vector<bool>& arcIsCritical,
+                                      const vector<bool>& nodeIsCritical,
+                                      const vector<bool>& patchIsCritical,
+                                      vector<vector<pair<int, EH>>>& nonZeroSumArcs);
+
+    /**
+     * @brief Return all paths previously found by this separationchecker via findSeparationViolatingPaths
+     *
+     * @return const vector<vector<pair<int, EH>>>& previous separation violating paths
+     */
+    const vector<vector<pair<int, EH>>>& previousSeparationViolatingPaths()
+    {
+        return _allSeparatingPaths;
+    }
+
+    /**
+     * @brief Return positive-coefficient-only parts of paths previously found by this separationchecker via
+     *        findSeparationViolatingPaths
+     *
+     * @return const vector<vector<pair<int, EH>>>& failsafe separation violating paths
+     */
+    const vector<vector<pair<int, EH>>>& failsafeSeparationViolatingPaths()
+    {
+        return _failsafeSeparatingPaths;
+    }
 
   protected:
     /**
@@ -110,13 +112,15 @@ class MCQuantizer : public virtual MCMeshManipulator
      *
      * @param criticalPath1 IN: critical link to use as start for MC graph search
      * @param nonZeroSumArcs IN/OUT: new separation violation is registered here
+     * @param failsafeNonZeroSumArcs IN/OUT: positive-coefficient-only version of \p nonZeroSumArcs
      * @return RetCode SUCCESS or error code
      */
-    RetCode traceExhaustPaths(const CriticalLink& criticalPath1,
-                              const vector<bool>& arcIsCritical,
-                              const vector<bool>& nodeIsCritical,
-                              const vector<bool>& patchIsCritical,
-                              vector<vector<std::pair<int, EH>>>& nonZeroSumArcs) const;
+    void traceExhaustPaths(const CriticalLink& criticalPath1,
+                           const vector<bool>& arcIsCritical,
+                           const vector<bool>& nodeIsCritical,
+                           const vector<bool>& patchIsCritical,
+                           vector<vector<std::pair<int, EH>>>& nonZeroSumArcs,
+                           vector<vector<std::pair<int, EH>>>& failsafeNonZeroSumArcs) const;
 
     /**
      * @brief During monotonous path expansion, this is used to determine the set of valid
@@ -128,9 +132,9 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @param ha2bRef OUT: mapping of outgoing next halfedges to their reference blocks/transitions
      * @return RetCode SUCCESS or error code
      */
-    RetCode determineNextHalfedges(const WeaklyMonotonousPath& currentP,
-                                   map<CH, Transition>& b2trans,
-                                   map<HEH, vector<CH>>& ha2bRef) const;
+    void determineNextHalfedges(const WeaklyMonotonousPath& currentP,
+                                map<CH, Transition>& b2trans,
+                                map<HEH, vector<CH>>& ha2bRef) const;
 
     /**
      * @brief Check if source of \p currentP and \p ha (must be connected to endpoint of
@@ -143,10 +147,8 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @return true if overlapping parametrically
      * @return false else
      */
-    bool checkArcOverlap(const WeaklyMonotonousPath& currentP,
-                         const HEH& ha,
-                         const CH& bRef,
-                         const Transition& trans) const;
+    bool
+    checkArcOverlap(const WeaklyMonotonousPath& currentP, const HEH& ha, const CH& bRef, const Transition& trans) const;
 
     /**
      * @brief Check if source of \p currentP and \p hp (must be connected to endpoint of
@@ -158,9 +160,7 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @return true if overlapping parametrically
      * @return false else
      */
-    bool checkPatchOverlap(const WeaklyMonotonousPath& currentP,
-                           const HFH& hp,
-                           const Transition& trans) const;
+    bool checkPatchOverlap(const WeaklyMonotonousPath& currentP, const HFH& hp, const Transition& trans) const;
 
     /**
      * @brief Check if the current path tip is still contained in P0 region.
@@ -182,10 +182,12 @@ class MCQuantizer : public virtual MCMeshManipulator
      * @return true if overlapping
      * @return false else
      */
-    static bool
-    bboxOverlap(const Vec3i& min1, const Vec3i& max1, const Vec3i& min2, const Vec3i& max2);
+    static bool bboxOverlap(const Vec3i& min1, const Vec3i& max1, const Vec3i& min2, const Vec3i& max2);
+
+    vector<vector<std::pair<int, EH>>> _allSeparatingPaths;      // Full set of separation violating paths
+    vector<vector<std::pair<int, EH>>> _failsafeSeparatingPaths; // Full set of separation violating paths (monotonous)
 };
 
-} // namespace mc3d
+} // namespace qgp3d
 
 #endif

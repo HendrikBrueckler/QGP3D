@@ -75,14 +75,15 @@ class Quantizer
      *                        (0.0 = coarsest possible IGM)
      * @param constraints OUT: complete set of integer spacing constraints fixing all integer DOFs
      * @param nHexes OUT: number of hexahedra in hex mesh implied by quantization
+     * @param maxSecondsIQP IN: optional time limit for IQP solvers. 0 disables IQP solvers and uses greedy solve only.
      * @return RetCode SUCCESS or error code
      */
-    RetCode quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes);
+    RetCode quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes, int maxSecondsIQP = 300);
 
   private:
     const TetMesh& _tetMesh; // ref to input mesh
-    TetMesh _meshCopy; // internal copy
-    MCMesh _mcMesh; // Motorcycle Complex mesh
+    TetMesh _meshCopy;       // internal copy
+    MCMesh _mcMesh;          // Motorcycle Complex mesh
     TetMeshProps _meshProps; // property manager for quantization
 };
 

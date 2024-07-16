@@ -1,7 +1,5 @@
 #include "QGP3D/ConstraintExtractor.hpp"
 
-#include "QGP3D/MCQuantizer.hpp"
-
 #include "OpenVolumeMesh/FileManager/FileManager.hh"
 
 namespace qgp3d

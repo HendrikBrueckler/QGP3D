@@ -1,7 +1,8 @@
 #include "QGP3D/Quantizer.hpp"
 
 #include "QGP3D/ConstraintExtractor.hpp"
-#include "QGP3D/MCQuantizer.hpp"
+#include "QGP3D/IQP/IQPQuantizer.hpp"
+#include "QGP3D/ISP/ISPQuantizer.hpp"
 
 #include <MC3D/Interface/MCGenerator.hpp>
 
@@ -18,8 +19,7 @@ Quantizer::Quantizer(const TetMesh& tetMesh)
 
 void Quantizer::setParam(const OVM::CellHandle& tet, const VH& corner, const Vec3d& uvw)
 {
-    assert(set<VH>(_meshCopy.tet_vertices(tet).first, _meshCopy.tet_vertices(tet).second).count(corner)
-           != 0);
+    assert(set<VH>(_meshCopy.tet_vertices(tet).first, _meshCopy.tet_vertices(tet).second).count(corner) != 0);
     _meshProps.ref<CHART>(tet)[corner] = Vec3Q(uvw);
 }
 
@@ -44,8 +44,12 @@ void Quantizer::setFeature(const VH& v, bool isFeature)
     _meshProps.set<IS_FEATURE_V>(v, isFeature);
 }
 
-Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes)
+Quantizer::RetCode
+Quantizer::quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes, int maxSecondsIQP)
 {
+#ifdef QGP3D_WITHOUT_IQP
+    (void)maxSecondsIQP;
+#endif
     MCGenerator mcGen(_meshProps);
     bool invalidCharts = false;
     for (auto tet : _meshCopy.cells())
@@ -172,15 +176,18 @@ Quantizer::RetCode Quantizer::quantize(double scaleFactor, vector<PathConstraint
         break; // noop
     }
 
-    auto retQuant = MCQuantizer(_meshProps).quantizeArcLengths(scaleFactor, true, true);
+    SeparationChecker sep(_meshProps);
+    ISPQuantizer isp(_meshProps, sep);
+    isp.quantize(scaleFactor, -DBL_MAX);
 
-    switch (retQuant)
-    {
-    case MCQuantizer::SOLVER_ERROR:
-        return MC_QUANTIZATION_ERROR;
-    case MCQuantizer::SUCCESS:
-        break; // noop
-    }
+#ifndef QGP3D_WITHOUT_IQP
+    IQPQuantizer iqp(_meshProps, sep);
+    IQPQuantizer::RetCode retIQP = IQPQuantizer::SUCCESS;
+    if (maxSecondsIQP > 0)
+        retIQP = iqp.quantize(scaleFactor, -DBL_MAX, maxSecondsIQP);
+
+    (void)retIQP;
+#endif
 
     ConstraintExtractor extr(_meshProps);
 

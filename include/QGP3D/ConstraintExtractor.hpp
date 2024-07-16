@@ -192,14 +192,14 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param nRoot OUT: tree root
      * @param bRoot OUT: tree root block
      * @param cellTreePrecursor OUT: spanning tree encoded by precursor for each block
-     * @param cutSurfaceToAvoid IN: wether a cut surface has been precomputed and the root node should avoid that surface
+     * @param cutSurfaceToAvoid IN: wether a cut surface was precomputed and the root node should avoid that surface
      * @return true if valid result
      * @return false if failure
      */
     bool buildBlockSpanningTree(VH& nRoot, CH& bRoot, vector<CH>& cellTreePrecursor, int cutSurfaceToAvoid);
 
     /**
-     * @brief Find a cycle of halfarcs passing through a given node \p nStart incident on a cut surface patch \p pStart .
+     * @brief Find a cycle of halfarcs passing through a given node \p nStart incident on a cut surface patch \p pStart
      *
      * @param nStart IN: node on cut surface
      * @param pStart IN: patch of cut surface
@@ -208,7 +208,11 @@ class ConstraintExtractor : public MCMeshNavigator
      * @param cellTreePrecursor IN: spanning tree encoded by precursor for each block
      * @return vector<HEH> ordered halfarc cycle
      */
-    vector<HEH> cycleThroughCutSurface(const VH& nStart, const FH& pStart, const VH& nRoot, const CH& bRoot, const vector<CH>& cellTreePrecursor) const;
+    vector<HEH> cycleThroughCutSurface(const VH& nStart,
+                                       const FH& pStart,
+                                       const VH& nRoot,
+                                       const CH& bRoot,
+                                       const vector<CH>& cellTreePrecursor) const;
 
     /**
      * @brief Types of nodes marked as "singular"
@@ -232,6 +236,6 @@ class ConstraintExtractor : public MCMeshNavigator
     vector<bool> _arcIsCritical;                    // tags for critical arcs
 };
 
-} // namespace mc3d
+} // namespace qgp3d
 
 #endif
