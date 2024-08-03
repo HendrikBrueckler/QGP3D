@@ -10,24 +10,32 @@ endif()
 list(APPEND QGP3D_LIB_LIST MC3D::MC3D)
 
 #gurobi
-find_package(Gurobi)
 
-if (Gurobi_FOUND)
+option(MC3D_USE_GUROBI ON "Use Gurobi as solver if available.")
+
+if (MC3D_USE_GUROBI)
+    find_package(Gurobi)
+endif()
+
+if (Gurobi_FOUND AND MC3D_USE_GUROBI)
   list(APPEND QGP3D_COMPILE_DEFINITIONS_PUB "QGP3D_WITH_GUROBI")
   list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiC)
   list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiCXX)
+    message("QGP3D: Compiling Gurobi based solver.")
 else()
+    message("QGP3D: Not using gurobi, looking for alternatives.")
   if (NOT TARGET Eigen3::Eigen)
     find_package(Eigen3 3.3 REQUIRED NO_MODULE)
   endif()
   find_package(CLP REQUIRED)
-  list(APPEND QGP3D_LIB_LIST_PRV ${CLP_LIBRARIES})
+  list(APPEND QGP3D_LIB_LIST_PRV Coin::CLP)
   find_package(CBC)
   find_package(BONMIN)
   if (NOT CBC_FOUND OR NOT BONMIN_FOUND)
     message("QGP3D: Compiling without IQP solver support, only heuristic solver")
     list(APPEND QGP3D_COMPILE_DEFINITIONS_PUB "QGP3D_WITHOUT_IQP")
   else()
+    message("QGP3D: Compiling Bonmin based solver.")
     list(APPEND QGP3D_LIB_LIST_PRV Eigen3::Eigen)
     list(APPEND QGP3D_LIB_LIST_PRV ${BONMIN_LIBRARIES})
     list(APPEND QGP3D_LIB_LIST_PRV ${CBC_LIBRARIES})
@@ -97,9 +105,6 @@ target_include_directories(QGP3D
 
 if (NOT Gurobi_FOUND)
   if (NOT CBC_FOUND OR NOT BONMIN_FOUND)
-    target_include_directories(QGP3D SYSTEM
-                              PRIVATE
-                              "$<BUILD_INTERFACE:${CLP_INCLUDE_DIRS}>")
   else()
     target_include_directories(QGP3D SYSTEM
                                PRIVATE
