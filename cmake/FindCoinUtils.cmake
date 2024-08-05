@@ -7,6 +7,7 @@ find_path(CoinUtils_INCLUDE_DIR
                 "/opt/homebrew/include/coinutils/coin"  #homebrew default path
                 "/usr/local/include/coinutils/coin"     #homebrew default path
                 "/usr/include/coinutils"
+                "/usr/include/coin"
                  "C:\\libs\\coinutils\\include"
               )
 

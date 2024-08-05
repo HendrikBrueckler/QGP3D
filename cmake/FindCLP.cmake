@@ -10,7 +10,6 @@ endif()
 find_path(CLP_INCLUDE_DIR
           NAMES ClpConfig.h
           PATHS "$ENV{CLP_DIR}/include/coin"
-                "$ENV{CBC_DIR}/include/coin"
                 "/opt/homebrew/include/clp/coin"  #homebrew default path
                 "/usr/local/include/clp/coin"     #homebrew default path
                 "/usr/include/coin"
