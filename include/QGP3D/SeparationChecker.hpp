@@ -124,17 +124,17 @@ class SeparationChecker : public virtual MCMeshNavigator
 
     /**
      * @brief During monotonous path expansion, this is used to determine the set of valid
-     *        outgoing halfedges and their reference blocks/transitions, so that the path of unfolded
+     *        outgoing halfearcs and their reference blocks/transitions, so that the path of unfolded
      *        blocks always parametrically overlaps (i.e. 0-length distance away) with the source MC element.
      *
      * @param currentP IN: current path state
      * @param b2trans OUT: map of transition to each block reachable within P0 of \p currentP
-     * @param ha2bRef OUT: mapping of outgoing next halfedges to their reference blocks/transitions
+     * @param ha2bRef OUT: mapping of outgoing next halfarcs to their reference blocks/transitions
      * @return RetCode SUCCESS or error code
      */
-    void determineNextHalfedges(const WeaklyMonotonousPath& currentP,
-                                map<CH, Transition>& b2trans,
-                                map<HEH, vector<CH>>& ha2bRef) const;
+    void determineNextHalfarcs(const WeaklyMonotonousPath& currentP,
+                               map<CH, Transition>& b2trans,
+                               map<HEH, vector<CH>>& ha2bRef) const;
 
     /**
      * @brief Check if source of \p currentP and \p ha (must be connected to endpoint of

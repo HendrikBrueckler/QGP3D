@@ -34,12 +34,11 @@ int SeparationChecker::numHexesInQuantization() const
     return nHexes;
 }
 
-void
-SeparationChecker::findSeparationViolatingPaths(vector<CriticalLink>& criticalLinks,
-                                                const vector<bool>& arcIsCritical,
-                                                const vector<bool>& nodeIsCritical,
-                                                const vector<bool>& patchIsCritical,
-                                                vector<vector<pair<int, EH>>>& nonZeroSumArcs)
+void SeparationChecker::findSeparationViolatingPaths(vector<CriticalLink>& criticalLinks,
+                                                     const vector<bool>& arcIsCritical,
+                                                     const vector<bool>& nodeIsCritical,
+                                                     const vector<bool>& patchIsCritical,
+                                                     vector<vector<pair<int, EH>>>& nonZeroSumArcs)
 {
     nonZeroSumArcs.clear();
     vector<vector<pair<int, EH>>> failsafeNonZeroSumArcs;
@@ -52,19 +51,21 @@ SeparationChecker::findSeparationViolatingPaths(vector<CriticalLink>& criticalLi
         for (HEH ha : criticalLink.pathHas)
             criticalLink.length += mcMeshProps().get<ARC_INT_LENGTH>(mcMeshProps().mesh().edge_handle(ha));
 
-        traceExhaustPaths(criticalLink, arcIsCritical, nodeIsCritical, patchIsCritical, nonZeroSumArcs, failsafeNonZeroSumArcs);
+        traceExhaustPaths(
+            criticalLink, arcIsCritical, nodeIsCritical, patchIsCritical, nonZeroSumArcs, failsafeNonZeroSumArcs);
     }
 
-    _failsafeSeparatingPaths.insert(_failsafeSeparatingPaths.end(), failsafeNonZeroSumArcs.begin(), failsafeNonZeroSumArcs.end());
+    _failsafeSeparatingPaths.insert(
+        _failsafeSeparatingPaths.end(), failsafeNonZeroSumArcs.begin(), failsafeNonZeroSumArcs.end());
     _allSeparatingPaths.insert(_allSeparatingPaths.end(), nonZeroSumArcs.begin(), nonZeroSumArcs.end());
 }
 
 void SeparationChecker::traceExhaustPaths(const CriticalLink& criticalLink1,
-                                                                const vector<bool>& arcIsCritical,
-                                                                const vector<bool>& nodeIsCritical,
-                                                                const vector<bool>& patchIsCritical,
-                                                                vector<vector<pair<int, EH>>>& nonZeroSumArcs,
-                                                                vector<vector<pair<int, EH>>>& failsafeNonZeroSumArcs) const
+                                          const vector<bool>& arcIsCritical,
+                                          const vector<bool>& nodeIsCritical,
+                                          const vector<bool>& patchIsCritical,
+                                          vector<vector<pair<int, EH>>>& nonZeroSumArcs,
+                                          vector<vector<pair<int, EH>>>& failsafeNonZeroSumArcs) const
 {
     const MCMesh& mcMesh = mcMeshProps().mesh();
 
@@ -188,7 +189,7 @@ void SeparationChecker::traceExhaustPaths(const CriticalLink& criticalLink1,
 
             map<CH, Transition> b2trans;
             map<HEH, vector<CH>> ha2bRef;
-            determineNextHalfedges(pathCurrent, b2trans, ha2bRef);
+            determineNextHalfarcs(pathCurrent, b2trans, ha2bRef);
 
             // Check for separation violations by current path
             if ((pathCurrent.walkedDirs & pathCurrent.monotonousDirs) != UVWDir::NONE)
@@ -422,9 +423,9 @@ bool SeparationChecker::bboxOverlap(const Vec3i& min1, const Vec3i& max1, const 
     return true;
 }
 
-void SeparationChecker::determineNextHalfedges(const WeaklyMonotonousPath& pathCurrent,
-                                                                     map<CH, Transition>& b2trans,
-                                                                     map<HEH, vector<CH>>& ha2bRef) const
+void SeparationChecker::determineNextHalfarcs(const WeaklyMonotonousPath& pathCurrent,
+                                              map<CH, Transition>& b2trans,
+                                              map<HEH, vector<CH>>& ha2bRef) const
 {
     auto& mcMesh = mcMeshProps().mesh();
 

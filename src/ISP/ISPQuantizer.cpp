@@ -36,7 +36,7 @@ struct GreatestWeightCompare
     bool operator()(const BundlePrio& b1, const BundlePrio& b2) const
     {
         // When true is returned, b1 gets lower priority than b2
-        return b1.prio > b2.prio;
+        return b1.prio < b2.prio;
     }
 };
 using BundleQueue = std::priority_queue<BundlePrio, std::deque<BundlePrio>, GreatestWeightCompare>;
