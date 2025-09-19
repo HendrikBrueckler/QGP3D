@@ -178,7 +178,13 @@ bool GurobiLPSolver::setupSepNonnegConstraints(int subproblem)
 bool GurobiLPSolver::solve(int subproblem)
 {
     auto& model = *_subproblem2model[subproblem];
-    model.optimize();
+    try {
+        model.optimize();
+    } catch (GRBException e) {
+        LOG(ERROR) << "QGP3D::GurobiLPSolver: Gurobi exception, errcode: " << e.getErrorCode();
+        LOG(ERROR) << "Gurobi error message: " << e.getMessage();
+        return false;
+    }
     int status = model.get(GRB_IntAttr_Status);
     return status == 2 || status == 9;
 }
