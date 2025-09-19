@@ -13,13 +13,12 @@ list(APPEND QGP3D_LIB_LIST MC3D::MC3D)
 
 option(QGP3D_USE_GUROBI ON "Use Gurobi as solver if available.")
 
-if (QGP3D_USE_GUROBI)
+if (QGP3D_USE_GUROBI AND NOT TARGET Gurobi::GurobiCXX)
     find_package(Gurobi)
 endif()
 
-if (Gurobi_FOUND AND QGP3D_USE_GUROBI)
+if (QGP3D_USE_GUROBI AND TARGET Gurobi::GurobiCXX)
   list(APPEND QGP3D_COMPILE_DEFINITIONS_PUB "QGP3D_WITH_GUROBI")
-  list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiC)
   list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiCXX)
   message("QGP3D: Compiling Gurobi based solver.")
 else()
