@@ -1,3 +1,10 @@
+![new-new-teaser](https://github.com/user-attachments/assets/110726b8-4d61-4e38-8d63-75f78a90bec7)
+
+# Flexible Singularities coming soon!
+An implementation of our new paper *Volume Quantization with Flexible Singularities for Hexahedral Meshing* (coming to Eurographics 2026) will be integrated into QGP3D within the next weeks.
+It allows adaptive simplification of the initial singularity graph at the quantization level and requires [C4HexMeshing](https://github.com/HendrikBrueckler/C4HexMeshing) to extract the simplified structure or a hex mesh.
+***
+
 ![new-teaser](https://github.com/user-attachments/assets/16685400-3697-4d6b-86d7-cf831515749d)
 
 # Integer-Sheet-Pump Quantization now integrated into QGP3D!
@@ -11,7 +18,7 @@ Instead of relying on IQP solvers it employs a greedy, yet near-optimal approach
 
 `QGP3D` is an implementation of [Volume Parametrization Quantization for Hexahedral Meshing \[Brückler et al. 2022\]](http://graphics.cs.uos.de/papers/Volume_Parametrization_Quantization-SIGGRAPH2022.pdf) (SIGGRAPH 2022) and [Integer-Sheet-Pump Quantization for Hexahedral Meshing \[Brückler et al. 2024\]](https://diglib.eg.org/bitstream/handle/10.1111/cgf15131/v43i5_04_cgf15131.pdf) (SGP 2024), distributed under GPLv3.
 
-If you make use of `QGP3D` in your scientific work, please cite one of our paper. For your convenience,
+If you make use of `QGP3D` in your scientific work, please cite one of our papers. For your convenience,
 you can use one of the following bibtex snippets:
 
     @article{QGP3D,
