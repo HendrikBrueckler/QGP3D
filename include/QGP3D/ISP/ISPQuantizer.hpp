@@ -42,7 +42,7 @@ class ISPQuantizer : public virtual MCMeshManipulator
      * @brief Create an instance handling quantization via integer sheet pump
      *
      * @param meshProps IN: mesh whose MC to quantize
-     * @param sep IN: separationchecker to use for lazy separation. May come with predetermined separation constraints
+     * @param sep IN: StructurePreserver to use for lazy separation. May come with predetermined separation constraints
      * @param obj IN: objective function
      */
     ISPQuantizer(TetMeshProps& meshProps, StructurePreserver& sep, ObjectiveFunction& obj);

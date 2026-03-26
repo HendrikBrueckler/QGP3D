@@ -28,7 +28,7 @@ class IQPQuantizer : public virtual MCMeshManipulator
      * @brief Create an instance handling quantization via IQP solvers
      *
      * @param meshProps IN: mesh whose MC to quantize
-     * @param sep IN: separationchecker to use for lazy separation. May come with predetermined separation constraints
+     * @param sep IN: StructurePreserver to use for lazy separation. May come with predetermined separation constraints
      */
     IQPQuantizer(TetMeshProps& meshProps, StructurePreserver& sep, QuadraticObjective& obj);
 

@@ -66,7 +66,7 @@ class StructurePreserver : public virtual MCMeshNavigator
     RetCode violatedStructuralConstraints(vector<vector<pair<int, EH>>>& nonZeroSumArcs);
 
     /**
-     * @brief Return all paths previously found by this separationchecker via violatedStructuralConstraints
+     * @brief Return all paths previously found by this StructurePreserver via violatedStructuralConstraints
      *
      * @return const vector<vector<pair<int, EH>>>& previous separation violating paths
      */
@@ -76,7 +76,7 @@ class StructurePreserver : public virtual MCMeshNavigator
     }
 
     /**
-     * @brief Return positive-coefficient-only parts of paths previously found by this separationchecker via
+     * @brief Return positive-coefficient-only parts of paths previously found by this StructurePreserver via
      *        violatedStructuralConstraints
      *
      * @return const vector<vector<pair<int, EH>>>& failsafe separation violating paths
