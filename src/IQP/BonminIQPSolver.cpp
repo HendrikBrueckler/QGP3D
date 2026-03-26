@@ -20,10 +20,10 @@ namespace qgp3d
 namespace impl
 {
 BonminIQPSolver::BonminIQPSolver(
-    TetMeshProps& meshProps, double scaling, double varLowerBound, double maxSeconds, double individualArcFactor)
+    TetMeshProps& meshProps, double varLowerBound, double maxSeconds)
     : TetMeshNavigator(meshProps), TetMeshManipulator(meshProps), MCMeshNavigator(meshProps),
-      MCMeshManipulator(meshProps), BaseIQPSolver(scaling, varLowerBound, maxSeconds, individualArcFactor),
-      _instance(new BonminIQP(meshProps, scaling, varLowerBound))
+      MCMeshManipulator(meshProps), BaseIQPSolver(varLowerBound, maxSeconds),
+      _instance(new BonminIQP(meshProps, varLowerBound))
 {
 }
 
@@ -72,60 +72,37 @@ void BonminIQPSolver::setupVariables()
     }
 }
 
-void BonminIQPSolver::setupObjective()
+void BonminIQPSolver::setupObjective(QuadraticObjective& obj)
 {
     auto& mc = mcMeshProps().mesh();
 
-    _instance->_objectiveBase = 0.0;
-    _instance->_objectiveLin = Eigen::VectorXd(_instance->_arc2idx.size());
-    _instance->_objectiveLin.setZero();
-    _instance->_hessianSparse.resize(_instance->_arc2idx.size(), _instance->_arc2idx.size());
-    vector<Eigen::Triplet<double>> triplets;
-
-    if (_individualArcFactor < 1.0)
-        for (CH block : mc.cells())
-            for (UVWDir axis : {UVWDir::NEG_V_NEG_W, UVWDir::NEG_U_NEG_W, UVWDir::NEG_U_NEG_V})
-            {
-                vector<int> indices;
-                double lenSum = 0.0;
-                for (EH arc : mcMeshProps().ref<BLOCK_EDGE_ARCS>(block).at(axis))
-                {
-                    indices.push_back(_instance->_arc2idx.at(arc));
-                    lenSum += mcMeshProps().get<ARC_DBL_LENGTH>(arc);
-                }
-                _instance->_objectiveBase += _scaling * lenSum * _scaling * lenSum * (1.0 - _individualArcFactor);
-                for (int i = 0; i < (int)indices.size(); i++)
-                {
-                    _instance->_objectiveLin[indices[i]] += -2 * lenSum * _scaling * (1.0 - _individualArcFactor);
-                    triplets.push_back({indices[i], indices[i], 2 * (1.0 - _individualArcFactor)});
-                    for (int j = i + 1; j < (int)indices.size(); j++)
-                    {
-                        triplets.push_back({indices[i], indices[j], 2 * (1.0 - _individualArcFactor)});
-                        triplets.push_back({indices[j], indices[i], 2 * (1.0 - _individualArcFactor)});
-                    }
-                }
-            }
-
-    for (EH arc : mc.edges())
-    {
-        int index = _instance->_arc2idx.at(arc);
-        double lenSum = mcMeshProps().get<ARC_DBL_LENGTH>(arc);
-        _instance->_objectiveBase += _scaling * lenSum * _scaling * lenSum * _individualArcFactor;
-        _instance->_objectiveLin[index] += -2 * lenSum * _scaling * _individualArcFactor;
-        triplets.push_back({index, index, 2 * _individualArcFactor});
-    }
-    _instance->_hessianSparse.setFromTriplets(triplets.begin(), triplets.end());
+    _instance->_objectiveBase = obj.f0;
+    _instance->_objectiveLin = obj.grad0;
+    _instance->_hessianSparse = obj.hessian;
 }
 
 void BonminIQPSolver::setupConstraints()
 {
     auto& mc = mcMeshProps().mesh();
+    const bool SINGULARITIES_FIXED = !meshProps().isAllocated<ALGO_VARIANT>() || (meshProps().get<ALGO_VARIANT>() % 2);
 
-    vector<CriticalLink> criticalLinks;
+    vector<bool> isCriticalNode, isCriticalArc, isCriticalPatch;
+    vector<CriticalEntity> criticalEntities;
     map<EH, int> a2criticalLinkIdx;
+    map<FH, int> p2criticalRegionIdx;
     map<VH, vector<int>> n2criticalLinksOut;
     map<VH, vector<int>> n2criticalLinksIn;
-    getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
+    getCriticalEntities(isCriticalNode,
+                        isCriticalArc,
+                        isCriticalPatch,
+                        criticalEntities,
+                        a2criticalLinkIdx,
+                        p2criticalRegionIdx,
+                        n2criticalLinksOut,
+                        n2criticalLinksIn,
+                        true,
+                        SINGULARITIES_FIXED,
+                        true);
 
     _instance->_constraints.clear();
 
@@ -201,7 +178,7 @@ void BonminIQPSolver::setupConstraints()
     }
 
     // Enforce critical links of length >= 1
-    for (auto& criticalLink : criticalLinks)
+    for (auto& criticalLink : criticalEntities)
     {
         if (criticalLink.pathHas.empty())
             continue;
@@ -214,64 +191,7 @@ void BonminIQPSolver::setupConstraints()
             coeffs.push_back(1.0);
         }
 
-        if (criticalLink.nFrom == criticalLink.nTo)
-            _instance->_constraints.push_back({vars, coeffs, 3.0, false});
-        else
-            _instance->_constraints.push_back({vars, coeffs, 1.0, false});
-    }
-
-    // Additional code to avoid selfadjacency
-    {
-        for (CH b : mc.cells())
-        {
-            auto& dir2ps = mcMeshProps().ref<BLOCK_FACE_PATCHES>(b);
-            for (auto& kv : dir2ps)
-            {
-                if (isNeg(kv.first))
-                    continue;
-
-                UVWDir dir = kv.first;
-                auto& ps = kv.second;
-                auto& psOpp = dir2ps.at(-dir);
-                set<CH> bs, bsOpp;
-                for (FH p : ps)
-                {
-                    HFH hp = mc.halfface_handle(p, 0);
-                    if (mc.incident_cell(hp) == b)
-                        hp = mc.opposite_halfface_handle(hp);
-                    CH bNext = mc.incident_cell(hp);
-                    if (!bNext.is_valid())
-                        continue;
-                    bs.insert(bNext);
-                }
-                for (FH p : psOpp)
-                {
-                    HFH hp = mc.halfface_handle(p, 0);
-                    if (mc.incident_cell(hp) == b)
-                        hp = mc.opposite_halfface_handle(hp);
-                    CH bNext = mc.incident_cell(hp);
-                    if (!bNext.is_valid())
-                        continue;
-                    bsOpp.insert(bNext);
-                }
-                bool mustBeNonZero = bs.count(b) != 0 || bsOpp.count(b) != 0 || containsSomeOf(bs, bsOpp);
-                if (mustBeNonZero)
-                {
-                    // Constrain non-zero length along dir
-                    vector<int> vars;
-                    vector<double> coeffs;
-                    auto& dir2as = mcMeshProps().ref<BLOCK_EDGE_ARCS>(b);
-                    for (EH a : dir2as.at(decompose(~(dir | -dir), DIM_2_DIRS)[0]))
-                    {
-                        vars.push_back(_instance->_arc2idx.at(a));
-                        coeffs.push_back(1.0);
-                    }
-                    _instance->_constraints.push_back({vars, coeffs, 1.0, false});
-
-                    continue;
-                }
-            }
-        }
+        _instance->_constraints.push_back({vars, coeffs, 1.0, false});
     }
 }
 
@@ -345,26 +265,32 @@ void BonminIQPSolver::addConstraints(const vector<vector<pair<int, EH>>>& nonZer
     {
         vector<int> vars;
         vector<double> coeffs;
+        double rhs = 1.0;
         for (auto sign2a : aColl)
         {
-            vars.push_back(_instance->_arc2idx.at(sign2a.second));
-            coeffs.push_back(sign2a.first);
+            if (sign2a.second.is_valid())
+            {
+                vars.push_back(_instance->_arc2idx.at(sign2a.second));
+                coeffs.push_back(sign2a.first);
+            }
+            else
+                rhs = sign2a.first;
         }
-        _instance->_constraints.push_back({vars, coeffs, 1.0, false});
+        _instance->_constraints.push_back({vars, coeffs, rhs, false});
     }
     _setupQuick.nonlinearSolver()->setModel(_instance);
     _setupExact.nonlinearSolver()->setModel(_instance);
 }
 
-BonminIQPSolver::BonminIQP::BonminIQP(const TetMeshProps& meshProps, double scaling, double varLowerBound)
-    : TetMeshNavigator(meshProps), MCMeshNavigator(meshProps), Bonmin::TMINLP(), _scaling(scaling),
+BonminIQPSolver::BonminIQP::BonminIQP(const TetMeshProps& meshProps, double varLowerBound)
+    : TetMeshNavigator(meshProps), MCMeshNavigator(meshProps), Bonmin::TMINLP(),
       _varLowerBound(varLowerBound)
 {
 }
 
 BonminIQPSolver::BonminIQP::BonminIQP(const BonminIQPSolver::BonminIQP& other)
     : TetMeshNavigator(other.meshProps()), MCMeshNavigator(other.meshProps()), Bonmin::TMINLP(),
-      _scaling(other._scaling), _varLowerBound(other._varLowerBound), _arc2idx(other._arc2idx),
+      _varLowerBound(other._varLowerBound), _arc2idx(other._arc2idx),
       _objectiveBase(other._objectiveBase), _objectiveLin(other._objectiveLin), _hessianSparse(other._hessianSparse),
       _constraints(other._constraints)
 {
@@ -461,8 +387,22 @@ bool BonminIQPSolver::BonminIQP::get_starting_point(Ipopt::Index n,
         for (EH arc : mcMeshProps().mesh().edges())
             x[_arc2idx.at(arc)] = mcMeshProps().get<ARC_INT_LENGTH>(arc);
     else
-        for (EH arc : mcMeshProps().mesh().edges())
-            x[_arc2idx.at(arc)] = _scaling * mcMeshProps().get<ARC_DBL_LENGTH>(arc);
+    {
+        Eigen::VectorXd x = Eigen::VectorXd::Zero(mcMeshProps().mesh().n_logical_edges());
+
+        Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> ldlt(_hessianSparse);
+        if (ldlt.info() != Eigen::Success)
+        {
+            LOG(ERROR) << "Ill conditioned objective hessian for some reason";
+            throw std::logic_error("");
+        }
+
+        Eigen::VectorXd sol = ldlt.solve(-_objectiveLin);
+
+        int i  = 0;
+        for (EH a: mcMeshProps().mesh().edges())
+            x[i++] = sol(i);
+    }
 
     return true;
 }

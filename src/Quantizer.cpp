@@ -3,6 +3,7 @@
 #include "QGP3D/ConstraintExtractor.hpp"
 #include "QGP3D/IQP/IQPQuantizer.hpp"
 #include "QGP3D/ISP/ISPQuantizer.hpp"
+#include "QGP3D/ObjectiveBuilder.hpp"
 
 #include <MC3D/Interface/MCGenerator.hpp>
 
@@ -15,6 +16,7 @@ Quantizer::Quantizer(const TetMesh& tetMesh)
     : _tetMesh(tetMesh), _meshCopy(_tetMesh), _mcMesh(), _meshProps(_meshCopy, _mcMesh)
 {
     _meshProps.allocate<CHART>();
+    _meshProps.allocate<ALGO_VARIANT>(1);
 }
 
 void Quantizer::setParam(const OVM::CellHandle& tet, const VH& corner, const Vec3d& uvw)
@@ -44,8 +46,8 @@ void Quantizer::setFeature(const VH& v, bool isFeature)
     _meshProps.set<IS_FEATURE_V>(v, isFeature);
 }
 
-Quantizer::RetCode
-Quantizer::quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes, int maxSecondsIQP)
+Quantizer::RetCode Quantizer::quantize(
+    double scaleFactor, vector<PathConstraint>& constraints, int& nHexes, int maxSecondsIQP, double individualArcFactor)
 {
 #ifdef QGP3D_WITHOUT_IQP
     (void)maxSecondsIQP;
@@ -176,15 +178,20 @@ Quantizer::quantize(double scaleFactor, vector<PathConstraint>& constraints, int
         break; // noop
     }
 
-    SeparationChecker sep(_meshProps);
-    ISPQuantizer isp(_meshProps, sep);
-    isp.quantize(scaleFactor, -DBL_MAX);
+    ObjectiveBuilder builder(_meshProps);
+    QuadraticObjective obj = individualArcFactor < 1.0
+                                 ? builder.simplifiedDistortionObjective(scaleFactor, individualArcFactor)
+                                 : builder.arcLengthDeviationObjective(scaleFactor);
+
+    StructurePreserver sep(_meshProps);
+    ISPQuantizer isp(_meshProps, sep, obj);
+    isp.quantize(-DBL_MAX);
 
 #ifndef QGP3D_WITHOUT_IQP
-    IQPQuantizer iqp(_meshProps, sep);
+    IQPQuantizer iqp(_meshProps, sep, obj);
     IQPQuantizer::RetCode retIQP = IQPQuantizer::SUCCESS;
     if (maxSecondsIQP > 0)
-        retIQP = iqp.quantize(scaleFactor, -DBL_MAX, maxSecondsIQP);
+        retIQP = iqp.quantize(-DBL_MAX, maxSecondsIQP);
 
     (void)retIQP;
 #endif

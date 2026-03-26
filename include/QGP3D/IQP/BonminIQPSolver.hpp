@@ -36,18 +36,14 @@ class BonminIQPSolver : public BaseIQPSolver, public virtual MCMeshManipulator
      * @param maxSeconds IN: time limit for solver in seconds
      * @param individualArcFactor IN: objective = this * <arc-length-deviation> + (1-this) * <block-length-deviation>
      */
-    BonminIQPSolver(TetMeshProps& meshProps,
-                    double scaling,
-                    double varLowerBound,
-                    double maxSeconds = 180,
-                    double individualArcFactor = 1.0);
+    BonminIQPSolver(TetMeshProps& meshProps, double varLowerBound, double maxSeconds = 180);
 
     /// @brief See \ref BaseIQPSolver for usage
 
     ///@{
     virtual void setupDefaultOptions();
     virtual void setupVariables();
-    virtual void setupObjective();
+    virtual void setupObjective(QuadraticObjective& obj);
     virtual void setupConstraints();
     virtual void finalizeSetup();
     virtual void enableQuickSolve();

@@ -7,19 +7,43 @@ double BaseLPSolver::weight(int bundle, bool inflating)
 {
     auto& mcMesh = mcMeshProps().mesh();
 
-    EH a = *_decomp.bundle2arcs[bundle].begin();
-    double xopt = mcMeshProps().get<ARC_DBL_LENGTH>(a) * _scaling;
-    int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(a);
-    double d = (inflating ? 1 : -1) * (xopt - xcurr);
-    if (1 <= d)
-        return 1.0 / (d + 1);
-    else if (0 <= d && d <= 1)
-        return mcMesh.n_logical_edges() / (d + 1);
+    map<int, double> partialSheet = {{bundle, inflating ? 1 : -1}};
+
+    double weight = 0.0;
+    if (_alternativeWeights)
+    {
+        double d1 = optimalDoubleFactor(partialSheet);
+        EH a = *_decomp.bundle2arcs[bundle].begin();
+        double xopt = _currentContinuousQuadraticOpt(_decomp.a2idx.at(a));
+        int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(a);
+        double d2 = (inflating ? 1 : -1) * (xopt - xcurr);
+        double d = std::max(d1, d2);
+        if (1 <= d)
+            weight = 1.0 / (d + 1);
+        else if (0 <= d)
+            weight = mcMesh.n_logical_edges() / (d + 1);
+        else
+            weight = mcMesh.n_logical_edges() * mcMesh.n_logical_edges() * (1-d);
+    }
     else
-        return mcMesh.n_logical_edges() * mcMesh.n_logical_edges() * (1 - d);
+    {
+        EH a = *_decomp.bundle2arcs[bundle].begin();
+        double xopt = _currentContinuousQuadraticOpt(_decomp.a2idx.at(a));
+        int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(a);
+        double d = (inflating ? 1 : -1) * (xopt - xcurr);
+        if (1 <= d)
+            weight = 1.0 / (d + 1);
+        else if (0 <= d)
+            weight = mcMesh.n_logical_edges() / (d + 1);
+        else
+            weight = mcMesh.n_logical_edges() * mcMesh.n_logical_edges() * (1 - d);
+    }
+
+    return weight * _decomp.bundle2arcs[bundle].size();
 }
 
-map<int, double> BaseLPSolver::integerSheet(int bundleToChange, bool add, bool fixing, bool useGlobalProblem)
+map<int, double>
+BaseLPSolver::integerSheet(int bundleToChange, bool add, bool fixing, bool useGlobalProblem, double dampingFactor)
 {
     map<int, double> sheet;
     int subproblem = -1;
@@ -40,6 +64,98 @@ map<int, double> BaseLPSolver::integerSheet(int bundleToChange, bool add, bool f
         setupPumpConstraints(subproblem, bundleToChange, add);
     else if (add)
         setupInflationOnlyConstraints(subproblem);
+
+    setupDynamicObjective(subproblem);
+
+    int nonZero = 0;
+
+    {
+        DLOG(INFO) << "Optimizing LP model";
+        bool success = solve(subproblem);
+        if (!success)
+        {
+            removeTemporaryConstraints(subproblem);
+            return sheet;
+        }
+    }
+
+    int lcd = 1;
+    // Enforce integrality
+    set<int> factors;
+    bool solved = false;
+    while (!solved)
+    {
+        sheet.clear();
+        solved = true;
+        lcd = 1;
+        int maxBundle = -1;
+        double minDelta = DBL_MAX;
+        for (int bundle : _decomp.subproblem2bundles.at(subproblem))
+        {
+            double val = solution(subproblem, bundle);
+            if (std::abs(val) > 1e-6)
+            {
+                sheet[bundle] = val;
+                nonZero++;
+                if (std::abs(std::round(val) - val) > 1e-6)
+                {
+                    solved = false;
+                    double delta = std::ceil(std::abs(val)) - std::abs(val);
+                    if (delta < minDelta)
+                    {
+                        minDelta = delta;
+                        maxBundle = bundle;
+                    }
+
+                    int factor = -1;
+                    for (int j = 2; j < 1024; j++)
+                        if (std::abs(std::round(j * val) - j * val) < 1e-6)
+                        {
+                            factor = j;
+                            break;
+                        }
+                    assert(factor >= 2);
+                    lcd = std::lcm(lcd, factor);
+                }
+            }
+        }
+
+        if (!solved)
+        {
+            reconstrainToNextInt(subproblem, maxBundle);
+            DLOG(INFO) << "Reoptimizing LP model";
+            bool success = solve(subproblem);
+            if (!success)
+            {
+                // instead scale by lcd
+                for (auto& kv : sheet)
+                    kv.second *= lcd;
+                break;
+            }
+        }
+    }
+
+    removeTemporaryConstraints(subproblem);
+
+    // At this point sheet is pure integer, now we can find optimal integer step size which again yields integer
+    int factor = optimalCleanedFactor(sheet, dampingFactor);
+    if (factor == 0)
+        return {};
+
+    for (auto& kv : sheet)
+        kv.second *= factor;
+    return sheet;
+}
+
+map<int, double> BaseLPSolver::integerSheet(int bundleI, int bundleJ, double dampingFactor)
+{
+    map<int, double> sheet;
+    int subproblem = _decomp.subproblem2bundles.size() - 1;
+
+    setupSepNonnegConstraints(subproblem);
+
+    setupPumpConstraints(subproblem, bundleI, true);
+    setupPumpConstraints(subproblem, bundleJ, false);
 
     setupDynamicObjective(subproblem);
 
@@ -104,7 +220,7 @@ map<int, double> BaseLPSolver::integerSheet(int bundleToChange, bool add, bool f
             if (!success)
             {
                 // instead scale by lcd
-                for (auto& kv: sheet)
+                for (auto& kv : sheet)
                     kv.second *= lcd;
                 break;
             }
@@ -114,32 +230,35 @@ map<int, double> BaseLPSolver::integerSheet(int bundleToChange, bool add, bool f
     removeTemporaryConstraints(subproblem);
 
     // At this point sheet is pure integer, now we can find optimal integer step size which again yields integer
-    int factor = optimalFactor(sheet);
+    int factor = optimalCleanedFactor(sheet, dampingFactor);
     if (factor == 0)
         return {};
 
-    for (auto& kv: sheet)
+    for (auto& kv : sheet)
         kv.second *= factor;
     return sheet;
 }
 
-int BaseLPSolver::optimalFactor(const map<int, double>& sheet) const
+void BaseLPSolver::useAlternativeWeights(bool altWeights)
 {
-    double dqDotQL = 0.0;
-    double dqSq = 0.0;
+    _alternativeWeights = altWeights;
+}
+
+double BaseLPSolver::optimalDoubleFactor(const map<int, double>& sheet) const
+{
+    Eigen::SparseVector<double> deltaQ(mcMeshProps().mesh().n_logical_edges());
     for (auto& kv : sheet)
-    {
-        int j = kv.first;
-        EH aj = *_decomp.bundle2arcs[j].begin();
-        double d = kv.second;
+        for (EH a : _decomp.bundle2arcs[kv.first])
+            deltaQ.insert(_decomp.a2idx.at(a)) = kv.second;
 
-        double xopt2 = mcMeshProps().get<ARC_DBL_LENGTH>(aj) * _scaling;
-        int xcurr2 = mcMeshProps().get<ARC_INT_LENGTH>(aj);
+    return -deltaQ.dot(_currentGrad) / deltaQ.dot(_currentHess * deltaQ);
+}
 
-        dqDotQL += d * (xcurr2 - xopt2)* _decomp.bundle2arcs[j].size();
-        dqSq += d*d* _decomp.bundle2arcs[j].size();
-    }
-    int optDelta = std::round(-dqDotQL / dqSq);
+int BaseLPSolver::optimalCleanedFactor(const map<int, double>& sheet, double dampingFactor) const
+{
+    double dblFactor = optimalDoubleFactor(sheet);
+    dblFactor = std::max(std::min(0.5, dblFactor), dblFactor * dampingFactor);
+    int optFactor = std::round(dblFactor);
 
     // Clamp to feasible region
     int maxFactor = INT_MAX;
@@ -185,7 +304,7 @@ int BaseLPSolver::optimalFactor(const map<int, double>& sheet) const
         }
     }
 
-    return std::clamp(optDelta, minFactor, maxFactor);
+    return std::clamp(optFactor, minFactor, maxFactor);
 }
 
 } // namespace qgp3d

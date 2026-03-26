@@ -36,7 +36,7 @@ endif()
 option(QGP3D_ENABLE_LOGGING    "Enable logging for QGP3D" ${QGP3D_STANDALONE})
 option(QGP3D_BUILD_CLI         "Build CLI app for QGP3D"  ${QGP3D_STANDALONE})
 option(QGP3D_SUBMODULES_MANUAL "Skip automatic submodule download" OFF)
-option(BUILD_SHARED_LIBS      "Build libraries as shared as opposed to static" ON)
+option(BUILD_SHARED_LIBS       "Build libraries as shared as opposed to static" ON)
 
 ### Global cmake settings
 set(CMAKE_CXX_STANDARD 17)

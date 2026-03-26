@@ -448,21 +448,23 @@ void ConstraintExtractor::assignNodeTypes()
 {
     auto& mcMesh = mcMeshProps().mesh();
 
-    vector<CriticalLink> criticalLinks;
+    vector<bool> isCriticalNode, isCriticalPatch;
+    vector<CriticalEntity> criticalEntities;
     map<EH, int> a2criticalLinkIdx;
+    map<FH, int> p2criticalRegionIdx;
     map<VH, vector<int>> n2criticalLinksOut;
     map<VH, vector<int>> n2criticalLinksIn;
-    getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
-
-    _arcIsCritical = vector<bool>(mcMesh.n_edges(), false);
-    for (auto& kv : a2criticalLinkIdx)
-        _arcIsCritical[kv.first.idx()] = true;
-
-    int nCircular = 0;
-    for (auto path : criticalLinks)
-        if (path.cyclic)
-            nCircular++;
-    LOG(INFO) << nCircular << " cyclic links out of " << criticalLinks.size();
+    getCriticalEntities(isCriticalNode,
+                        _arcIsCritical,
+                        isCriticalPatch,
+                        criticalEntities,
+                        a2criticalLinkIdx,
+                        p2criticalRegionIdx,
+                        n2criticalLinksOut,
+                        n2criticalLinksIn,
+                        true,
+                        true,
+                        true);
 
     // Mark singular nodes (including those inserted into circular arcs)
     _constraintNodeType = vector<ConstraintNodeType>(mcMesh.n_vertices(), NONE);
@@ -485,7 +487,7 @@ void ConstraintExtractor::assignNodeTypes()
     for (auto& region : boundaryRegions)
         if (region.boundaryHas.empty())
             nBorderless++;
-    LOG(INFO) << nBorderless << " borderless boundary regions out of " << boundaryRegions.size();
+    DLOG(INFO) << nBorderless << " borderless boundary regions out of " << boundaryRegions.size();
 
     // Check for boundary regions with no critical nodes or critical arcs in them
     for (auto& region : boundaryRegions)
@@ -509,7 +511,7 @@ void ConstraintExtractor::assignNodeTypes()
         else if (_constraintNodeType[n.idx()] == ARTIFICIAL_ON_LINK)
             nArtificialOnLink++;
 
-    LOG(INFO) << nNative << " native singular nodes, " << nArtificialOnLink
+    DLOG(INFO) << nNative << " native singular nodes, " << nArtificialOnLink
               << " singular nodes inserted on cyclic singular links, " << nArtificialOnBoundary
               << " singular nodes inserted on borderless boundary region ("
               << nNative + nArtificialOnBoundary + nArtificialOnLink << " total)";
@@ -816,7 +818,13 @@ list<HEH> ConstraintExtractor::pathThroughBlock(const VH& nStart, const set<VH>&
 
         for (HEH ha : mcMesh.outgoing_halfedges(n))
         {
-            if (!contains(mcMesh.halfedge_cells(ha), b))
+            // Necessary to iterate like this, because selfadjacency messes with edgecelliter
+            set<CH> bs;
+            for (FH p : mcMesh.edge_faces(mcMesh.edge_handle(ha)))
+                for (CH b2 : mcMesh.face_cells(p))
+                    if (b2.is_valid())
+                        bs.insert(b2);
+            if (!contains(bs, b))
                 continue;
             VH nTo = mcMesh.to_vertex_handle(ha);
             if (!nVisited[nTo.idx()])

@@ -1,17 +1,21 @@
 #include "QGP3D/ISP/ISPQuantizer.hpp"
 
+#include "QGP3D/ObjectiveBuilder.hpp"
+
 #ifdef QGP3D_WITH_GUROBI
 #include "QGP3D/ISP/GurobiLPSolver.hpp"
 #else
 #include "QGP3D/ISP/ClpLPSolver.hpp"
 #endif
 
+#include <Eigen/Sparse>
+
 namespace qgp3d
 {
 
-ISPQuantizer::ISPQuantizer(TetMeshProps& meshProps, SeparationChecker& sep)
-    : TetMeshNavigator(meshProps), TetMeshManipulator(meshProps), MCMeshNavigator(meshProps),
-      MCMeshManipulator(meshProps), _sep(sep)
+ISPQuantizer::ISPQuantizer(TetMeshProps& meshProps_, StructurePreserver& sep, ObjectiveFunction& obj)
+    : TetMeshNavigator(meshProps_), TetMeshManipulator(meshProps_), MCMeshNavigator(meshProps_),
+      MCMeshManipulator(meshProps_), _sep(sep), _obj(obj)
 {
     decomposeIntoSubproblems();
 }
@@ -31,132 +35,130 @@ struct BundlePrio
     int state;
 };
 
-struct GreatestWeightCompare
+struct LeastWeightCompare
 {
     bool operator()(const BundlePrio& b1, const BundlePrio& b2) const
     {
-        // When true is returned, b1 gets lower priority than b2
+        // When true is returned, b2 gets popped before b1
         return b1.prio < b2.prio;
     }
 };
-using BundleQueue = std::priority_queue<BundlePrio, std::deque<BundlePrio>, GreatestWeightCompare>;
+using BundleQueue = std::priority_queue<BundlePrio, std::deque<BundlePrio>, LeastWeightCompare>;
+
+struct BiBundlePrio
+{
+    // Assume adding i and subtracting j
+    BiBundlePrio(int _i, int _j, double _prio, int _state) : i(_i), j(_j), prio(_prio), state(_state)
+    {
+    }
+
+    int i;
+    int j;
+    double prio;
+    int state;
+};
+
+struct DoubleLeastWeightCompare
+{
+    bool operator()(const BiBundlePrio& b1, const BiBundlePrio& b2) const
+    {
+        // When true is returned, b2 gets popped before b1
+        return b1.prio < b2.prio;
+    }
+};
+using BiBundleQueue = std::priority_queue<BiBundlePrio, std::deque<BiBundlePrio>, DoubleLeastWeightCompare>;
 
 } // namespace
 
-ISPQuantizer::RetCode ISPQuantizer::quantize(double scaling, double varLowerBound)
+ISPQuantizer::RetCode ISPQuantizer::quantize(double varLowerBound)
 {
     auto& mcMesh = mcMeshProps().mesh();
-
-    // Allocate properties
-    bool wasAllocated = mcMeshProps().isAllocated<ARC_DBL_LENGTH>();
-    if (!wasAllocated)
-    {
-        mcMeshProps().allocate<ARC_DBL_LENGTH>(0.0);
-        for (EH arc : mcMesh.edges())
-        {
-            // Determine current arc length
-            double length = 0.0;
-            for (HEH he : mcMeshProps().ref<ARC_MESH_HALFEDGES>(arc))
-                length += edgeLengthUVW<CHART>(meshProps().mesh().edge_handle(he));
-            mcMeshProps().set<ARC_DBL_LENGTH>(arc, length);
-        }
-    }
 
     if (!mcMeshProps().isAllocated<ARC_INT_LENGTH>())
         mcMeshProps().allocate<ARC_INT_LENGTH>(0);
 
-        // Create and setup LP solver
+    // Create and setup LP solver
 #ifdef QGP3D_WITH_GUROBI
-    impl::GurobiLPSolver sheetFinder(meshProps(), scaling, _decomp);
+    impl::GurobiLPSolver sheetFinder(meshProps(), _decomp, _currentGrad, _currentHess, _currentContinuousQuadraticOpt);
 #else
-    impl::ClpLPSolver sheetFinder(meshProps(), scaling, _decomp);
+    impl::ClpLPSolver sheetFinder(meshProps(), _decomp, _currentGrad, _currentHess, _currentContinuousQuadraticOpt);
 #endif
     sheetFinder.setupLPBase();
-
-    // Compute critical link structure
-    vector<CriticalLink> criticalLinks;
-    map<EH, int> a2criticalLinkIdx;
-    map<VH, vector<int>> n2criticalLinksOut;
-    map<VH, vector<int>> n2criticalLinksIn;
-    getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
-
-    vector<bool> isCriticalArc(mcMesh.n_edges(), false);
-    vector<bool> isCriticalNode(mcMesh.n_vertices(), false);
-    vector<bool> isCriticalPatch(mcMesh.n_faces(), false);
-    for (auto& kv : a2criticalLinkIdx)
-        isCriticalArc[kv.first.idx()] = true;
-    for (VH n : mcMesh.vertices())
-    {
-        auto type = mcMeshProps().nodeType(n);
-        if (type.first == SingularNodeType::SINGULAR || type.second == FeatureNodeType::FEATURE
-            || type.second == FeatureNodeType::SEMI_FEATURE_SINGULAR_BRANCH)
-            isCriticalNode[n.idx()] = true;
-    }
-    for (FH p : mcMesh.faces())
-        isCriticalPatch[p.idx()] = mcMesh.is_boundary(p)
-                                   || (mcMeshProps().isAllocated<IS_FEATURE_F>() && mcMeshProps().get<IS_FEATURE_F>(p));
 
     // Main algo
     vector<vector<pair<int, EH>>> dynamicConstraints;
     vector<vector<pair<int, EH>>> simpleDynamicConstraints;
 
-    double currentObj = greedyDescent(sheetFinder, scaling, false);
+    cacheGradHess(_obj);
 
-    DLOG(INFO) << "Obj before separation checking: " << currentObj;
+    double currentObj = greedyDescent(sheetFinder, false, false);
 
     int iter = 0;
 
     bool validatedSolution = false;
-    bool useGlobalProblem = false;
-    while (!validatedSolution || useGlobalProblem)
+    bool recheckAfterThoroughSolve = false;
+    bool uncheckedChanges = true;
+    while (!validatedSolution || recheckAfterThoroughSolve)
     {
-        if (useGlobalProblem)
-            currentObj = greedyDescent(sheetFinder, scaling, true);
+        vector<vector<pair<int, EH>>> newConstraints;
+        _sep.violatedSimpleConstraints(varLowerBound, newConstraints);
+        simpleDynamicConstraints.insert(simpleDynamicConstraints.end(), newConstraints.begin(), newConstraints.end());
 
-        auto constraints = violatedSimpleConstraints(varLowerBound, criticalLinks);
-        simpleDynamicConstraints.insert(simpleDynamicConstraints.end(), constraints.begin(), constraints.end());
-
-        if (constraints.empty())
+        if (newConstraints.empty())
         {
-            if (dynamicConstraints.empty() && !_sep.previousSeparationViolatingPaths().empty())
-                constraints = _sep.previousSeparationViolatingPaths();
+            if (dynamicConstraints.empty() && !_sep.previousStructuralConstraints().empty())
+                newConstraints = _sep.previousStructuralConstraints();
             else
             {
-                _sep.findSeparationViolatingPaths(
-                    criticalLinks, isCriticalArc, isCriticalNode, isCriticalPatch, constraints);
-                DLOG(INFO) << "Found unseparated features? " << !constraints.empty();
+                if (uncheckedChanges)
+                {
+                    _sep.violatedStructuralConstraints(newConstraints);
+                    uncheckedChanges = false;
+                }
             }
         }
 
-        validatedSolution = constraints.empty();
-        DLOG(INFO) << "Iter " << iter << " solution valid? " << constraints.empty();
+        validatedSolution = newConstraints.empty();
+        DLOG(INFO) << "Iter " << iter << " solution valid? " << newConstraints.empty();
 
         if (!validatedSolution)
         {
-            useGlobalProblem = false;
-            dynamicConstraints.insert(dynamicConstraints.end(), constraints.begin(), constraints.end());
+            dynamicConstraints.insert(dynamicConstraints.end(), newConstraints.begin(), newConstraints.end());
             sheetFinder.setDynamicConstraints(dynamicConstraints);
-            currentObj = makeFeasible(sheetFinder, scaling);
+            currentObj = makeFeasible(sheetFinder);
 
             if (numViolatedConstraints(sheetFinder.dynamicConstraints()) > 0)
             {
-                DLOG(WARNING) << "Switching to failsafe separation, due to no feasible integer solution found with "
-                                 "standard separation";
-                vector<vector<pair<int, EH>>> failsafeDynamicConstraints = _sep.failsafeSeparationViolatingPaths();
+                LOG(WARNING) << "Switching to failsafe separation, due to no feasible integer solution found with "
+                                "standard separation";
+                vector<vector<pair<int, EH>>> failsafeDynamicConstraints = _sep.previousFailsafeStructuralConstraints();
                 failsafeDynamicConstraints.insert(
                     failsafeDynamicConstraints.end(), simpleDynamicConstraints.begin(), simpleDynamicConstraints.end());
                 sheetFinder.setDynamicConstraints(failsafeDynamicConstraints);
-                currentObj = makeFeasible(sheetFinder, scaling);
+                currentObj = makeFeasible(sheetFinder);
+
+                if (numViolatedConstraints(sheetFinder.dynamicConstraints()) > 0)
+                    throw std::logic_error("Should be feasible now");
 
                 sheetFinder.setDynamicConstraints(dynamicConstraints);
             }
 
-            currentObj = greedyDescent(sheetFinder, scaling, false);
+            currentObj = greedyDescent(sheetFinder, true, false);
 
+            uncheckedChanges = true;
             iter++;
         }
-        else if (!dynamicConstraints.empty())
-            useGlobalProblem = !useGlobalProblem;
+
+        if (validatedSolution && !recheckAfterThoroughSolve)
+        {
+            double objNew = greedyDescent(sheetFinder, true, true);
+            if (objNew != currentObj)
+                uncheckedChanges = true;
+            currentObj = objNew;
+            recheckAfterThoroughSolve = true;
+        }
+        else
+            recheckAfterThoroughSolve = false;
     }
     DLOG(INFO) << "Needed " << iter << " sheet pump iterations to separate critical entities";
     DLOG(INFO) << "Final obj after separating critical arcs: " << currentObj;
@@ -164,8 +166,8 @@ ISPQuantizer::RetCode ISPQuantizer::quantize(double scaling, double varLowerBoun
     int minArcLength = 10000;
     for (EH a : mcMesh.edges())
         minArcLength = std::min(minArcLength, mcMeshProps().get<ARC_INT_LENGTH>(a));
-    LOG(INFO) << "Sheet-pump-quantized MC, nHexes: " << _sep.numHexesInQuantization() << ", objective: " << currentObj
-              << ", iterations: " << iter + 1 << ", minArcLength " << minArcLength << std::endl;
+    LOG(INFO) << "Sheet-pump-quantized MC, nHexes: " << _sep.numHexesInQuantization() << ", iterations: " << iter + 1
+              << ", minArcLength " << minArcLength << ", objective: " << currentObj;
 
     return SUCCESS;
 }
@@ -173,9 +175,18 @@ ISPQuantizer::RetCode ISPQuantizer::quantize(double scaling, double varLowerBoun
 void ISPQuantizer::decomposeIntoSubproblems()
 {
     auto& mcMesh = mcMeshProps().mesh();
+
     // Mini precompute
+    _decomp.a2idx.clear();
+    _decomp.idx2a.clear();
+    for (EH a : mcMesh.edges())
+    {
+        _decomp.a2idx[a] = _decomp.a2idx.size();
+        _decomp.idx2a.push_back(a);
+    }
+
     _decomp.hp2hasByDir.clear();
-    for (auto hp : mcMesh.halffaces())
+    for (HFH hp : mcMesh.halffaces())
         _decomp.hp2hasByDir[hp] = halfpatchHalfarcsByDir(hp);
 
     // Group arcs into arc bundles constrained to be of equal length
@@ -310,97 +321,251 @@ void ISPQuantizer::decomposeIntoSubproblems()
     DLOG(INFO) << "SUBPROBLEMS: " << nMultiBundles << " + 1 global problem instance";
 }
 
-double ISPQuantizer::greedyDescent(BaseLPSolver& sheetFinder, double scaling, bool useGlobalProblem)
+double ISPQuantizer::greedyDescent(BaseLPSolver& sheetFinder, bool useGlobalProblem, bool thoroughSolve)
 {
-    double currentObj = obj(scaling);
+    double currentObj = obj();
 
     auto getPriority = [&, this](int i)
     {
-        auto a = *_decomp.bundle2arcs[i].begin();
-        double xopt = mcMeshProps().get<ARC_DBL_LENGTH>(a) * scaling;
-        int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(a);
-        return xopt - xcurr;
+        double d1 = 0.0;
+        {
+            auto a = *_decomp.bundle2arcs[i].begin();
+            double xopt = _currentContinuousQuadraticOpt[_decomp.a2idx.at(a)];
+            int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(a);
+            d1 = xopt - xcurr;
+        }
+        return d1;
     };
 
     int skipped = 0;
 
-    bool improvement = true;
-    while (improvement)
+    bool redoWithBiBundleSheets = true;
+    bool improving = true;
+    while (improving)
     {
-        improvement = false;
-
-        vector<map<int, double>> bundle2sheet(_decomp.bundle2arcs.size());
-        vector<int> bundle2lastState(_decomp.bundle2arcs.size(), 0);
-        vector<int> bundle2sheetState(_decomp.bundle2arcs.size(), -1);
-
-        BundleQueue bQ;
-        for (int i = 0; i < (int)_decomp.bundle2arcs.size(); i++)
+        while (improving)
         {
-            double prio = getPriority(i);
-            bQ.push(BundlePrio(i, std::abs(prio), !std::signbit(prio), 0));
+            improving = false;
+
+            vector<int> bundle2lastState(_decomp.bundle2arcs.size(), 0);
+            vector<vector<int>> w2bundle2sheetState(2, vector<int>(_decomp.bundle2arcs.size(), -1));
+            vector<vector<map<int, double>>> w2bundle2sheet(2, vector<map<int, double>>(_decomp.bundle2arcs.size()));
+            vector<vector<map<int, double>>> w2bundle2sheetOpp(2, vector<map<int, double>>(_decomp.bundle2arcs.size()));
+
+            BundleQueue bQ;
+            for (int i = 0; i < (int)_decomp.bundle2arcs.size(); i++)
+            {
+                double prio = getPriority(i);
+                bQ.push(BundlePrio(i, std::abs(prio), !std::signbit(prio), 0));
+            }
+
+            while (!bQ.empty() && (thoroughSolve || (double)skipped < std::max(0.5 * _decomp.bundle2arcs.size(), 30.0)))
+            {
+                BundlePrio top = bQ.top();
+                bQ.pop();
+                int i = top.i;
+                if (bundle2lastState[i] != top.state)
+                    continue;
+
+                // Sheet testing
+                map<int, double> improvingSheet;
+                for (bool alternativeWeights : {false, true})
+                {
+                    // Lazy sheet update
+                    if (w2bundle2sheetState[alternativeWeights][i] != bundle2lastState[i])
+                    {
+                        sheetFinder.useAlternativeWeights(alternativeWeights);
+                        w2bundle2sheet[alternativeWeights][i]
+                            = sheetFinder.integerSheet(i, top.add, false, useGlobalProblem);
+                        if (thoroughSolve)
+                            w2bundle2sheetOpp[alternativeWeights][i]
+                                = sheetFinder.integerSheet(i, !top.add, false, useGlobalProblem);
+                        w2bundle2sheetState[alternativeWeights][i] = bundle2lastState[i];
+                    }
+                    for (bool add : {top.add, !top.add})
+                    {
+                        if (!thoroughSolve && add != top.add)
+                            continue;
+                        auto sheet = (add == top.add) ? w2bundle2sheet[alternativeWeights][i]
+                                                      : w2bundle2sheetOpp[alternativeWeights][i];
+
+                        if (sheet.empty())
+                            continue;
+
+                        double deltaObj = objDelta(sheet);
+                        if (deltaObj < -1e-6)
+                        {
+                            DLOG(INFO) << "Found a " << (alternativeWeights ? "alternative " : "")
+                                      << "sheet thats worth " << (add ? "adding." : "subtracting.") << " currentObj "
+                                      << currentObj << " newObj " << currentObj + deltaObj;
+                            // Execute update
+                            currentObj = currentObj + deltaObj;
+                            improvingSheet = sheet;
+                            break;
+                        }
+                    }
+                    if (!improvingSheet.empty())
+                        break;
+                }
+
+                // Applying sheet
+                if (!improvingSheet.empty())
+                {
+                    improving = true;
+                    redoWithBiBundleSheets = true;
+
+                    applyChange(improvingSheet);
+
+                    // This invalidates queue prio but timestamps below guarantee old entries are rejected
+                    cacheGradHess(_obj);
+
+                    std::set<int> affBundles;
+                    for (bool alternativeWeights : {false, true})
+                    {
+                        for (int i2 : affectedBundles(
+                                 improvingSheet, w2bundle2sheet[alternativeWeights], sheetFinder.dynamicConstraints()))
+                            affBundles.insert(i2);
+                        if (thoroughSolve)
+                            for (int i2 : affectedBundles(improvingSheet,
+                                                          w2bundle2sheetOpp[alternativeWeights],
+                                                          sheetFinder.dynamicConstraints()))
+                                affBundles.insert(i2);
+                    }
+                    for (int i2 : affBundles)
+                    {
+                        double prio = getPriority(i2);
+                        bQ.push(BundlePrio(i2, std::abs(prio), !std::signbit(prio), ++bundle2lastState[i2]));
+                    }
+                    skipped = 0;
+                }
+                else
+                    skipped++;
+            }
         }
 
-        while (!bQ.empty() && (double)skipped < std::max(0.5 * _decomp.bundle2arcs.size(), 30.0))
+        if (thoroughSolve && redoWithBiBundleSheets)
         {
-            BundlePrio top = bQ.top();
-            bQ.pop();
-            int i = top.i;
-            if (bundle2lastState[i] != top.state)
-                continue;
+            redoWithBiBundleSheets = false;
+            DLOG(INFO) << "Bi-Bundle Sheeting";
+            // Assume inflating i, deflating j
+            auto getBiPriority
+                = [&, this](int i, int j) { return sheetFinder.optimalDoubleFactor({{i, 1}, {j, -1}}); };
 
-            if (bundle2sheetState[i] != bundle2lastState[i])
-            {
-                bundle2sheet[i] = sheetFinder.integerSheet(i, top.add, false, useGlobalProblem);
-                bundle2sheetState[i] = bundle2lastState[i];
-            }
+            vector<map<pairTT<int>, map<int, double>>> w2biBundle2sheet(2);
+            map<pairTT<int>, int> biBundle2lastState;
+            map<pairTT<int>, int> biBundle2sheetState;
 
-            auto sheet = bundle2sheet[i];
-
-            if (sheet.empty())
-                continue;
-
-            double deltaObj = 0.0;
-            for (auto& kv : sheet)
-            {
-                int j = kv.first;
-                EH aj = *_decomp.bundle2arcs[j].begin();
-                double d = kv.second;
-
-                double xopt = mcMeshProps().get<ARC_DBL_LENGTH>(aj) * scaling;
-                int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(aj);
-
-                deltaObj += d * (d + 2 * (xcurr - xopt)) * _decomp.bundle2arcs[j].size();
-            }
-            if (deltaObj < -1e-6)
-            {
-                DLOG(INFO) << "Found a sheet thats worth " << (top.add ? "adding." : "subtracting.") << " currentObj "
-                           << currentObj << " newObj " << currentObj + deltaObj;
-                // Execute update
-                currentObj = currentObj + deltaObj;
-                improvement = true;
-
-                for (auto& kv : sheet)
-                    for (EH a : _decomp.bundle2arcs[kv.first])
-                        mcMeshProps().ref<ARC_INT_LENGTH>(a) += std::round(kv.second);
-
-                for (int i2 : affectedBundles(sheet, bundle2sheet, sheetFinder.dynamicConstraints()))
+            BiBundleQueue bQ;
+            set<pairTT<int>> biBundles;
+            for (int i = 0; i < _currentHess.outerSize(); ++i)
+                for (Eigen::SparseMatrix<double>::InnerIterator it(_currentHess, i); it; ++it)
                 {
-                    double prio = getPriority(i2);
-                    bQ.push(BundlePrio(i2, std::abs(prio), !std::signbit(prio), ++bundle2lastState[i2]));
+                    if (it.col() > it.row())
+                    {
+                        int bundle1 = _decomp.arc2bundle[_decomp.idx2a[it.row()]];
+                        int bundle2 = _decomp.arc2bundle[_decomp.idx2a[it.col()]];
+                        if (bundle1 != bundle2)
+                            biBundles.insert({std::min(bundle1, bundle2), std::max(bundle1, bundle2)});
+                    }
                 }
-                skipped = 0;
+
+            for (auto& [i, j] : biBundles)
+            {
+                biBundle2lastState[{i, j}] = 0;
+                biBundle2lastState[{j, i}] = 0;
+                biBundle2sheetState[{i, j}] = -1;
+                biBundle2sheetState[{j, i}] = -1;
+                bQ.push(BiBundlePrio(i, j, getBiPriority(i, j), 0));
+                bQ.push(BiBundlePrio(j, i, getBiPriority(j, i), 0));
             }
-            else
-                skipped++;
+
+            while (!bQ.empty())
+            {
+                BiBundlePrio top = bQ.top();
+                bQ.pop();
+                int i = top.i;
+                int j = top.j;
+                if (biBundle2lastState[{i, j}] != top.state)
+                    continue;
+
+                if (biBundle2sheetState[{i, j}] != biBundle2lastState[{i, j}])
+                {
+                    for (bool alternativeWeights : {false, true})
+                    {
+                        sheetFinder.useAlternativeWeights(alternativeWeights);
+                        w2biBundle2sheet[alternativeWeights][{i, j}] = sheetFinder.integerSheet(i, j);
+                    }
+                    biBundle2sheetState[{i, j}] = biBundle2lastState[{i, j}];
+                }
+
+                map<int, double> improvingSheet;
+
+                for (bool alternativeWeights : {false, true})
+                {
+                    auto sheet = w2biBundle2sheet[alternativeWeights][{i, j}];
+
+                    if (sheet.empty())
+                        continue;
+
+                    double deltaObj = objDelta(sheet);
+                    if (deltaObj < -1e-6)
+                    {
+                        DLOG(INFO) << "Found a " << (alternativeWeights ? "alternative " : "")
+                                  << "bi-bundle sheet thats worth " << "adding."
+                                  << " currentObj " << currentObj << " newObj " << currentObj + deltaObj;
+                        // Execute update
+                        currentObj = currentObj + deltaObj;
+                        improvingSheet = sheet;
+                        break;
+                    }
+                }
+                // Applying sheet
+                if (!improvingSheet.empty())
+                {
+                    improving = true;
+
+                    applyChange(improvingSheet);
+
+                    // This invalidates queue prio but timestamps below guarantee old entries are rejected
+                    cacheGradHess(_obj);
+
+                    std::set<int> affBundles;
+                    for (bool alternativeWeights : {false, true})
+                    {
+                        auto set1 = affectedBundles(
+                            improvingSheet, w2biBundle2sheet[alternativeWeights], sheetFinder.dynamicConstraints());
+                        for (auto i2 : set1)
+                            affBundles.insert(i2);
+                    }
+                    for (auto& [nextI, nextJ] : biBundles)
+                    {
+                        if (affBundles.count(nextI) || affBundles.count(nextJ))
+                        {
+                            bQ.push(BiBundlePrio(nextI,
+                                                     nextJ,
+                                                     getBiPriority(nextI, nextJ),
+                                                     ++biBundle2lastState[{nextI, nextJ}]));
+                            bQ.push(BiBundlePrio(nextJ,
+                                                     nextI,
+                                                     getBiPriority(nextJ, nextI),
+                                                     ++biBundle2lastState[{nextJ, nextI}]));
+                        }
+                    }
+                    skipped = 0;
+                }
+                else
+                    skipped++;
+            }
         }
     }
 
     return currentObj;
 }
 
-double ISPQuantizer::makeFeasible(BaseLPSolver& sheetFinder, double scaling)
+double ISPQuantizer::makeFeasible(BaseLPSolver& sheetFinder)
 {
-    double currentObj = obj(scaling);
+    double currentObj = obj();
+    sheetFinder.useAlternativeWeights(false);
 
     {
         int nUnfulfilled = numViolatedConstraints(sheetFinder.dynamicConstraints());
@@ -427,18 +592,7 @@ double ISPQuantizer::makeFeasible(BaseLPSolver& sheetFinder, double scaling)
         {
             bestBundle = 0;
             bundle2sheet[0] = bestSheet;
-            double deltaObj = 0.0;
-            for (auto& kv : bestSheet)
-            {
-                int j = kv.first;
-                EH aj = *_decomp.bundle2arcs[j].begin();
-                double d = kv.second;
-
-                double xopt = mcMeshProps().get<ARC_DBL_LENGTH>(aj) * scaling;
-                int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(aj);
-
-                deltaObj += d * (d + 2 * (xcurr - xopt)) * _decomp.bundle2arcs[j].size();
-            }
+            double deltaObj = objDelta(bestSheet);
             bestDeltaObj = deltaObj;
             bestRelDeltaObj = deltaObj / numViolatedConstraints(sheetFinder.dynamicConstraints());
         }
@@ -476,15 +630,10 @@ double ISPQuantizer::makeFeasible(BaseLPSolver& sheetFinder, double scaling)
                     // Does sheet fulfill all its associated separation constraints?
 
                     int nUnfulfilledPre = numViolatedConstraints(sheetFinder.dynamicConstraints());
-                    for (auto& kv : sheet)
-                        for (EH a : _decomp.bundle2arcs[kv.first])
-                            mcMeshProps().ref<ARC_INT_LENGTH>(a) += kv.second;
+                    applyChange(sheet);
                     int nUnfulfilled = numViolatedConstraints(sheetFinder.dynamicConstraints());
-
-                    // revert test
-                    for (auto& kv : sheet)
-                        for (EH a : _decomp.bundle2arcs[kv.first])
-                            mcMeshProps().ref<ARC_INT_LENGTH>(a) -= kv.second;
+                    // revert
+                    applyChange(sheet, false);
 
                     if (nUnfulfilled < nUnfulfilledPre)
                     {
@@ -495,18 +644,7 @@ double ISPQuantizer::makeFeasible(BaseLPSolver& sheetFinder, double scaling)
                 if (feasibilityImprovement <= 0)
                     continue;
 
-                double deltaObj = 0.0;
-                for (auto& kv : sheet)
-                {
-                    int j = kv.first;
-                    EH aj = *_decomp.bundle2arcs[j].begin();
-                    double d = kv.second;
-
-                    double xopt = mcMeshProps().get<ARC_DBL_LENGTH>(aj) * scaling;
-                    int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(aj);
-
-                    deltaObj += d * (d + 2 * (xcurr - xopt)) * _decomp.bundle2arcs[j].size();
-                }
+                double deltaObj = objDelta(sheet);
                 if (deltaObj / feasibilityImprovement < bestRelDeltaObj)
                 {
                     bestBundle = bundle;
@@ -519,14 +657,13 @@ double ISPQuantizer::makeFeasible(BaseLPSolver& sheetFinder, double scaling)
         if (bestBundle >= 0)
         {
             auto& sheet = bundle2sheet[bestBundle];
-            for (auto& kv : bundle2sheet[bestBundle])
-                for (EH a : _decomp.bundle2arcs[kv.first])
-                    mcMeshProps().ref<ARC_INT_LENGTH>(a) += std::round(kv.second);
+            applyChange(sheet);
+            cacheGradHess(_obj);
 
             int nUnfulfilled = numViolatedConstraints(sheetFinder.dynamicConstraints());
             DLOG(INFO) << "Found a separating sheet, " << nUnfulfilled
-                       << " separation constraints still unfulfilled. currentObj " << currentObj << " newObj "
-                       << currentObj + bestDeltaObj;
+                      << " separation constraints still unfulfilled. currentObj " << currentObj << " newObj "
+                      << currentObj + bestDeltaObj;
             currentObj += bestDeltaObj;
             if (nUnfulfilled == 0)
                 break;
@@ -538,85 +675,6 @@ double ISPQuantizer::makeFeasible(BaseLPSolver& sheetFinder, double scaling)
         }
     }
     return currentObj;
-}
-
-vector<vector<pair<int, EH>>> ISPQuantizer::violatedSimpleConstraints(double varLowerBound,
-                                                                      vector<CriticalLink>& criticalLinks)
-{
-    auto& mcMesh = mcMeshProps().mesh();
-
-    vector<vector<pair<int, EH>>> newConstraints;
-    bool foundVarBelowBounds = containsMatching(mcMesh.edges(),
-                                                [this, varLowerBound](const EH& a)
-                                                { return mcMeshProps().get<ARC_INT_LENGTH>(a) < varLowerBound; });
-    if (foundVarBelowBounds)
-    {
-        for (EH a : mcMesh.edges())
-        {
-            newConstraints.emplace_back();
-            newConstraints.back().push_back({1, a});
-            newConstraints.back().push_back({varLowerBound, EH()});
-        }
-    }
-
-    bool collapsedLink
-        = containsMatching(criticalLinks,
-                           [this](const CriticalLink& link)
-                           {
-                               if (link.pathHas.empty())
-                                   return false;
-                               int sum = 0;
-                               for (HEH ha : link.pathHas)
-                                   sum += mcMeshProps().get<ARC_INT_LENGTH>(mcMeshProps().mesh().edge_handle(ha));
-                               return sum <= 0;
-                           });
-    if (collapsedLink)
-    {
-        for (auto& criticalLink : criticalLinks)
-        {
-            if (criticalLink.pathHas.empty())
-                continue;
-            newConstraints.emplace_back();
-            for (HEH ha : criticalLink.pathHas)
-                newConstraints.back().push_back({1, mcMesh.edge_handle(ha)});
-        }
-    }
-    bool negBlock
-        = containsMatching(mcMesh.cells(),
-                           [this](const CH& b)
-                           {
-                               for (UVWDir dir : {UVWDir::POS_V_POS_W, UVWDir::POS_U_POS_W, UVWDir::POS_U_POS_V})
-                               {
-                                   int length = 0;
-                                   auto& arcs = mcMeshProps().ref<BLOCK_EDGE_ARCS>(b).at(dir);
-                                   for (EH a : arcs)
-                                       length += mcMeshProps().get<ARC_INT_LENGTH>(a);
-                                   if (length < 0)
-                                       return true;
-                               }
-                               return false;
-                           });
-    if (negBlock)
-    {
-        for (CH b : mcMesh.cells())
-        {
-            for (UVWDir dir : {UVWDir::POS_V_POS_W, UVWDir::POS_U_POS_W, UVWDir::POS_U_POS_V})
-            {
-                newConstraints.emplace_back();
-                auto& nonZeroSum = newConstraints.back();
-                auto& arcs = mcMeshProps().ref<BLOCK_EDGE_ARCS>(b).at(dir);
-                for (EH a : arcs)
-                    nonZeroSum.push_back({1, a});
-                // Abuse this as marker that constraint is >= 0
-                nonZeroSum.push_back({0, EH()});
-            }
-        }
-    }
-    DLOG(INFO) << "Found var below bounds? " << foundVarBelowBounds;
-    DLOG(INFO) << "Found critical link? " << collapsedLink;
-    DLOG(INFO) << "Found negative block? " << negBlock;
-
-    return newConstraints;
 }
 
 int ISPQuantizer::numViolatedConstraints(const vector<vector<pair<int, EH>>>& constraints) const
@@ -636,16 +694,22 @@ int ISPQuantizer::numViolatedConstraints(const vector<vector<pair<int, EH>>>& co
     return nUnfulfilled;
 }
 
-double ISPQuantizer::obj(double scaling) const
+double ISPQuantizer::obj() const
 {
-    double obj = 0.0;
+    Eigen::VectorXd x(mcMeshProps().mesh().n_logical_edges());
+    int i = 0;
     for (EH a : mcMeshProps().mesh().edges())
-    {
-        double xopt = mcMeshProps().get<ARC_DBL_LENGTH>(a) * scaling;
-        int xcurr = mcMeshProps().get<ARC_INT_LENGTH>(a);
-        obj += (xopt - xcurr) * (xopt - xcurr);
-    }
-    return obj;
+        x(i++) = mcMeshProps().get<ARC_INT_LENGTH>(a);
+
+    return _obj.function_value(x);
+}
+
+double ISPQuantizer::objDelta(const map<int, double>& sheet)
+{
+    applyChange(sheet);
+    double newObj = obj();
+    applyChange(sheet, false);
+    return newObj - obj();
 }
 
 set<int> ISPQuantizer::affectedBundles(const map<int, double>& sheet,
@@ -657,11 +721,10 @@ set<int> ISPQuantizer::affectedBundles(const map<int, double>& sheet,
         bundleSet.insert(kv.first);
     for (auto& coll : constraints)
     {
-        if (containsMatching(coll,
-                             [&bundleSet, this](const pair<const int, EH>& sign2a) {
-                                 return sign2a.second.is_valid()
-                                        && bundleSet.count(_decomp.arc2bundle.at(sign2a.second)) != 0;
-                             }))
+        if (containsMatching(
+                coll,
+                [&bundleSet, this](const pair<const int, EH>& sign2a)
+                { return sign2a.second.is_valid() && bundleSet.count(_decomp.arc2bundle.at(sign2a.second)) != 0; }))
             for (auto& sign2a : coll)
                 if (sign2a.second.is_valid())
                     bundleSet.insert(_decomp.arc2bundle.at(sign2a.second));
@@ -676,6 +739,67 @@ set<int> ISPQuantizer::affectedBundles(const map<int, double>& sheet,
     }
     bundleSet2.insert(bundleSet.begin(), bundleSet.end());
     return bundleSet2;
+}
+
+set<int> ISPQuantizer::affectedBundles(const map<int, double>& sheet,
+                                       const map<pairTT<int>, map<int, double>>& biBundle2sheet,
+                                       const vector<vector<pair<int, EH>>>& constraints) const
+{
+    set<int> bundleSet;
+    for (auto& kv : sheet)
+        bundleSet.insert(kv.first);
+    for (auto& coll : constraints)
+    {
+        if (containsMatching(
+                coll,
+                [&bundleSet, this](const pair<const int, EH>& sign2a)
+                { return sign2a.second.is_valid() && bundleSet.count(_decomp.arc2bundle.at(sign2a.second)) != 0; }))
+            for (auto& sign2a : coll)
+                if (sign2a.second.is_valid())
+                    bundleSet.insert(_decomp.arc2bundle.at(sign2a.second));
+    }
+    set<int> bundleSet2;
+    for (auto& [biBundle, sheet2] : biBundle2sheet)
+    {
+        if (containsMatching(
+                sheet2, [&bundleSet](const pair<const int, double>& kv) { return bundleSet.count(kv.first) != 0; }))
+        {
+            bundleSet2.insert(biBundle.first);
+            bundleSet2.insert(biBundle.second);
+        }
+    }
+    bundleSet2.insert(bundleSet.begin(), bundleSet.end());
+    return bundleSet2;
+}
+
+void ISPQuantizer::cacheGradHess(ObjectiveFunction& obj)
+{
+    Eigen::VectorXd x(mcMeshProps().mesh().n_logical_edges());
+    int i = 0;
+    for (EH a : mcMeshProps().mesh().edges())
+        x(i++) = mcMeshProps().get<ARC_INT_LENGTH>(a);
+    obj.gradient(x, _currentGrad);
+    obj.hessian(x, _currentHess);
+    if (!obj.is_hessian_const() || _currentContinuousQuadraticOpt.rows() == 0)
+    {
+        Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> ldlt(_currentHess);
+        if (ldlt.info() != Eigen::Success)
+        {
+            LOG(ERROR) << "Ill conditioned objective hessian";
+            _currentContinuousQuadraticOpt = Eigen::VectorXd(_decomp.idx2a.size());
+            for (i = 0; i < (int)_decomp.idx2a.size(); i++)
+                _currentContinuousQuadraticOpt(i) = mcMeshProps().get<ARC_DBL_LENGTH>(_decomp.idx2a[i]);
+        }
+        else
+            _currentContinuousQuadraticOpt = x + ldlt.solve(-_currentGrad);
+    }
+}
+
+void ISPQuantizer::applyChange(const map<int, double>& sheet, bool add)
+{
+    for (auto& kv : sheet)
+        for (EH a : _decomp.bundle2arcs[kv.first])
+            mcMeshProps().ref<ARC_INT_LENGTH>(a) += (add ? 1 : -1) * std::round(kv.second);
 }
 
 } // namespace qgp3d

@@ -2,6 +2,7 @@
 #ifndef QGP3D_WITHOUT_IQP
 
 #include "QGP3D/IQP/GurobiIQPSolver.hpp"
+#include "QGP3D/ObjectiveBuilder.hpp"
 
 namespace qgp3d
 {
@@ -9,18 +10,17 @@ namespace impl
 {
 
 GurobiIQPSolver::GurobiIQPSolver(
-    TetMeshProps& meshProps, double scaling, double varLowerBound, double maxSeconds, double individualArcFactor)
+    TetMeshProps& meshProps, double varLowerBound, double maxSeconds)
     : TetMeshNavigator(meshProps), TetMeshManipulator(meshProps), MCMeshNavigator(meshProps),
-      MCMeshManipulator(meshProps), BaseIQPSolver(scaling, varLowerBound, maxSeconds, individualArcFactor),
-      _env(true), _model(
-        (_env.set(GRB_IntParam_LogToConsole, true),_env.start(), _env))
+      MCMeshManipulator(meshProps), BaseIQPSolver(varLowerBound, maxSeconds), _env(true),
+      _model((_env.set(GRB_IntParam_LogToConsole, true), _env.start(), _env))
 {
 }
 
 void GurobiIQPSolver::setupDefaultOptions()
 {
 #ifdef NDEBUG
-    _model.set(GRB_IntParam_LogToConsole, true);
+    _model.set(GRB_IntParam_LogToConsole, false);
 #else
     _model.set(GRB_IntParam_LogToConsole, true);
 #endif
@@ -50,37 +50,36 @@ void GurobiIQPSolver::setupVariables()
     }
 }
 
-void GurobiIQPSolver::setupObjective()
+void GurobiIQPSolver::setupObjective(QuadraticObjective& obj)
 {
     auto& mc = mcMeshProps().mesh();
 
-    // Objective Function minimizes deviation from scaled seamless param
-    GRBQuadExpr objective = 0.;
-    if (_individualArcFactor < 1.0)
+    std::vector<EH> idx2arc;
+    for (EH a : mc.edges())
+        idx2arc.push_back(a);
+
+    // Objective expression
+    GRBQuadExpr objective = obj.f0;
+
+    for (int i = 0; i < (int)idx2arc.size(); i++)
     {
-        for (CH block : mc.cells())
-        {
-            // For each axis U/V/W
-            for (UVWDir axis : {UVWDir::NEG_V_NEG_W, UVWDir::NEG_U_NEG_W, UVWDir::NEG_U_NEG_V})
-            {
-                GRBLinExpr varSum = 0.;
-                double lenSum = 0;
-                // WARNING this way of using range based for loop (chaining 2 function calls)
-                // depends on the first calls not returning rvalues!
-                for (EH arc : mcMeshProps().ref<BLOCK_EDGE_ARCS>(block).at(axis))
-                {
-                    varSum += _arc2var.at(arc);
-                    lenSum += mcMeshProps().get<ARC_DBL_LENGTH>(arc);
-                }
-                objective += (varSum - _scaling * lenSum) * (varSum - _scaling * lenSum) * (1.0 - _individualArcFactor);
-            }
-        }
+        EH a = idx2arc[i];
+        objective += obj.grad0(i) * _arc2var.at(a);
     }
-    for (EH arc : mc.edges())
-    {
-        GRBVar var = _arc2var.at(arc);
-        double len = mcMeshProps().get<ARC_DBL_LENGTH>(arc);
-        objective += (var - _scaling * len) * (var - _scaling * len) * _individualArcFactor;
+
+    for (int k = 0; k < obj.hess.outerSize(); ++k) {
+      for (Eigen::SparseMatrix<double>::InnerIterator it(obj.hess, k); it; ++it) {
+        int i = it.row();
+        int j = it.col();
+        EH ai = idx2arc[i];
+        if (i == j) {
+            auto& var = _arc2var.at(ai);
+            objective += (0.5 * it.value()) * var * var;
+        } else if (j > i) {
+            EH aj = idx2arc[j];
+            objective += it.value() * _arc2var.at(ai) * _arc2var.at(aj);
+        }
+      }
     }
 
     _model.setObjective(objective, GRB_MINIMIZE);
@@ -89,12 +88,25 @@ void GurobiIQPSolver::setupObjective()
 void GurobiIQPSolver::setupConstraints()
 {
     auto& mc = mcMeshProps().mesh();
+    const bool SINGULARITIES_FIXED = !meshProps().isAllocated<ALGO_VARIANT>() || (meshProps().get<ALGO_VARIANT>() % 2);
 
-    vector<CriticalLink> criticalLinks;
+    vector<bool> isCriticalNode, isCriticalArc, isCriticalPatch;
+    vector<CriticalEntity> criticalEntities;
     map<EH, int> a2criticalLinkIdx;
+    map<FH, int> p2criticalRegionIdx;
     map<VH, vector<int>> n2criticalLinksOut;
     map<VH, vector<int>> n2criticalLinksIn;
-    getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
+    getCriticalEntities(isCriticalNode,
+                        isCriticalArc,
+                        isCriticalPatch,
+                        criticalEntities,
+                        a2criticalLinkIdx,
+                        p2criticalRegionIdx,
+                        n2criticalLinksOut,
+                        n2criticalLinksIn,
+                        true,
+                        SINGULARITIES_FIXED,
+                        true);
 
     // Each patches opposite arc lengths must match
     for (FH patch : mc.faces())
@@ -144,72 +156,34 @@ void GurobiIQPSolver::setupConstraints()
     }
 
     // Enforce critical links of length >= 1
-    for (auto& criticalLink : criticalLinks)
+    for (auto& criticalEntity : criticalEntities)
     {
-        if (criticalLink.pathHas.empty())
+        if (criticalEntity.pathHas.empty())
             continue;
         GRBLinExpr sumExpr = 0;
-        for (HEH ha : criticalLink.pathHas)
+        for (HEH ha : criticalEntity.pathHas)
             sumExpr += _arc2var.at(mc.edge_handle(ha));
 
         std::string constraintName = "Separation" + std::to_string(_nSeparationConstraints);
-        if (criticalLink.nFrom == criticalLink.nTo)
-            _model.addConstr(sumExpr, GRB_GREATER_EQUAL, 3.0, constraintName);
-        else
-            _model.addConstr(sumExpr, GRB_GREATER_EQUAL, 1.0, constraintName);
+        _model.addConstr(sumExpr, GRB_GREATER_EQUAL, 1.0, constraintName);
         _nSeparationConstraints++;
     }
 
-    // Additional code to avoid selfadjacency
+    for (auto& criticalEntity : criticalEntities)
     {
-        for (CH b : mc.cells())
-        {
-            auto& dir2ps = mcMeshProps().ref<BLOCK_FACE_PATCHES>(b);
-            for (auto& kv : dir2ps)
-            {
-                if (isNeg(kv.first))
-                    continue;
+        if (criticalEntity.regionPs.empty())
+            continue;
+        set<EH> as;
+        for (FH p : criticalEntity.regionPs)
+            for (EH a : mc.face_edges(p))
+                as.insert(a);
+        GRBLinExpr sumExpr = 0;
+        for (EH a : as)
+            sumExpr += _arc2var.at(a);
 
-                UVWDir dir = kv.first;
-                auto& ps = kv.second;
-                auto& psOpp = dir2ps.at(-dir);
-                set<CH> bs, bsOpp;
-                for (FH p : ps)
-                {
-                    HFH hp = mc.halfface_handle(p, 0);
-                    if (mc.incident_cell(hp) == b)
-                        hp = mc.opposite_halfface_handle(hp);
-                    CH bNext = mc.incident_cell(hp);
-                    if (!bNext.is_valid())
-                        continue;
-                    bs.insert(bNext);
-                }
-                for (FH p : psOpp)
-                {
-                    HFH hp = mc.halfface_handle(p, 0);
-                    if (mc.incident_cell(hp) == b)
-                        hp = mc.opposite_halfface_handle(hp);
-                    CH bNext = mc.incident_cell(hp);
-                    if (!bNext.is_valid())
-                        continue;
-                    bsOpp.insert(bNext);
-                }
-                bool mustBeNonZero = bs.count(b) != 0 || bsOpp.count(b) != 0 || containsSomeOf(bs, bsOpp);
-                if (mustBeNonZero)
-                {
-                    // Constrain non-zero length along dir
-                    GRBLinExpr sumExpr = 0;
-                    auto& dir2as = mcMeshProps().ref<BLOCK_EDGE_ARCS>(b);
-                    for (EH a : dir2as.at(decompose(~(dir | -dir), DIM_2_DIRS)[0]))
-                        sumExpr += _arc2var.at(a);
-                    std::string constraintName = "Selfadjacency" + std::to_string(_nSeparationConstraints);
-                    _model.addConstr(sumExpr, GRB_GREATER_EQUAL, 1.0, constraintName);
-                    _nSeparationConstraints++;
-
-                    continue;
-                }
-            }
-        }
+        std::string constraintName = "Separation" + std::to_string(_nSeparationConstraints);
+        _model.addConstr(sumExpr, GRB_GREATER_EQUAL, 1.0, constraintName);
+        _nSeparationConstraints++;
     }
 }
 
@@ -277,16 +251,22 @@ void GurobiIQPSolver::addConstraints(const vector<vector<pair<int, EH>>>& nonZer
     {
         vector<GRBVar> vars;
         vector<double> coeff;
+        double rhs = 1.0;
         for (auto sign2a : aColl)
         {
-            vars.push_back(_arc2var.at(sign2a.second));
-            coeff.push_back(sign2a.first);
+            if (sign2a.second.is_valid())
+            {
+                vars.push_back(_arc2var.at(sign2a.second));
+                coeff.push_back(sign2a.first);
+            }
+            else
+                rhs = sign2a.first;
         }
         GRBLinExpr sumExpr = 0;
         sumExpr.addTerms(&coeff[0], &vars[0], vars.size());
 
         std::string constraintName = "Separation" + std::to_string(_nSeparationConstraints);
-        _model.addConstr(sumExpr, GRB_GREATER_EQUAL, 1.0, constraintName);
+        _model.addConstr(sumExpr, GRB_GREATER_EQUAL, rhs, constraintName);
         _nSeparationConstraints++;
     }
 }

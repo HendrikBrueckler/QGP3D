@@ -1,8 +1,8 @@
 #ifndef QGP3D_WITHOUT_IQP
 
 #include "QGP3D/IQP/IQPQuantizer.hpp"
-
-#define INDIVIDUAL_ARC_FACTOR 1.0
+#include "QGP3D/ObjectiveBuilder.hpp"
+#include "QGP3D/ObjectiveFunction.hpp"
 
 #ifdef QGP3D_WITH_GUROBI
 #include "QGP3D/IQP/GurobiIQPSolver.hpp"
@@ -11,6 +11,7 @@
 #else // QGP3D with CLP or BONMIN
 
 #include "QGP3D/IQP/BonminIQPSolver.hpp"
+
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -18,87 +19,50 @@
 
 #include "BonBonminSetup.hpp"
 #include "BonCbc.hpp"
-#include "BonIpoptSolver.hpp"
-#include "BonOsiTMINLPInterface.hpp"
-#include "BonTMINLP.hpp"
 #include "BonEcpCuts.hpp"
+#include "BonIpoptSolver.hpp"
 #include "BonOACutGenerator2.hpp"
 #include "BonOaNlpOptim.hpp"
-#include "BonBonminSetup.hpp"
+#include "BonOsiTMINLPInterface.hpp"
+#include "BonTMINLP.hpp"
 #endif
 
-namespace qgp3d{
+namespace qgp3d
+{
 
-IQPQuantizer::IQPQuantizer(TetMeshProps& meshProps, SeparationChecker& sep)
-    : TetMeshNavigator(meshProps), TetMeshManipulator(meshProps), MCMeshNavigator(meshProps),
-      MCMeshManipulator(meshProps), _sep(sep)
+IQPQuantizer::IQPQuantizer(TetMeshProps& meshProps_, StructurePreserver& sep, QuadraticObjective& obj)
+    : TetMeshNavigator(meshProps_), TetMeshManipulator(meshProps_), MCMeshNavigator(meshProps_),
+      MCMeshManipulator(meshProps_), _sep(sep), _obj(obj)
 {
 }
 
-IQPQuantizer::RetCode IQPQuantizer::quantize(double scaling, double varLowerBound, int maxSecondsIQP)
+IQPQuantizer::RetCode IQPQuantizer::quantize(double varLowerBound, int maxSecondsIQP)
 {
     const MCMesh& mc = mcMeshProps().mesh();
 
-    map<EH, int> previousSolution;
-
-    bool wasAllocated = mcMeshProps().isAllocated<ARC_DBL_LENGTH>();
-    if (!wasAllocated)
-    {
-        mcMeshProps().allocate<ARC_DBL_LENGTH>(0.0);
-        for (EH arc : mc.edges())
-        {
-            // Determine current arc length
-            double length = 0.0;
-            for (HEH he : mcMeshProps().ref<ARC_MESH_HALFEDGES>(arc))
-                length += edgeLengthUVW<CHART>(meshProps().mesh().edge_handle(he));
-            mcMeshProps().set<ARC_DBL_LENGTH>(arc, length);
-        }
-    }
-
+    map<EH, int> previousValidSolution;
     if (!mcMeshProps().isAllocated<ARC_INT_LENGTH>())
         mcMeshProps().allocate<ARC_INT_LENGTH>(0);
     else
-        for (EH a: mcMeshProps().mesh().edges())
-            previousSolution[a] = mcMeshProps().get<ARC_INT_LENGTH>(a);
+        for (EH a : mcMeshProps().mesh().edges())
+            previousValidSolution[a] = mcMeshProps().get<ARC_INT_LENGTH>(a);
 
-    vector<CriticalLink> criticalLinks;
-    map<EH, int> a2criticalLinkIdx;
-    map<VH, vector<int>> n2criticalLinksOut;
-    map<VH, vector<int>> n2criticalLinksIn;
-    getCriticalLinks(criticalLinks, a2criticalLinkIdx, n2criticalLinksOut, n2criticalLinksIn, true);
-
-    vector<bool> isCriticalArc(mc.n_edges(), false);
-    vector<bool> isCriticalNode(mc.n_vertices(), false);
-    vector<bool> isCriticalPatch(mc.n_faces(), false);
-    for (auto& kv : a2criticalLinkIdx)
-        isCriticalArc[kv.first.idx()] = true;
-    for (VH n : mc.vertices())
-    {
-        auto type = mcMeshProps().nodeType(n);
-        if (type.first == SingularNodeType::SINGULAR || type.second == FeatureNodeType::FEATURE
-            || type.second == FeatureNodeType::SEMI_FEATURE_SINGULAR_BRANCH)
-            isCriticalNode[n.idx()] = true;
-    }
-    for (FH p : mc.faces())
-        isCriticalPatch[p.idx()]
-            = mc.is_boundary(p)
-                || (mcMeshProps().isAllocated<IS_FEATURE_F>() && mcMeshProps().get<IS_FEATURE_F>(p));
-
-
+    map<EH, int> previousSolution;
+    for (EH a : mcMeshProps().mesh().edges())
+        previousSolution[a] = mcMeshProps().get<ARC_INT_LENGTH>(a);
 
 #ifdef QGP3D_WITH_GUROBI
-    impl::GurobiIQPSolver iqp(meshProps(), scaling, std::max(-GRB_INFINITY, varLowerBound), maxSecondsIQP, INDIVIDUAL_ARC_FACTOR);
+    impl::GurobiIQPSolver iqp(meshProps(), std::max(-GRB_INFINITY, varLowerBound), maxSecondsIQP);
 #else
-    impl::BonminIQPSolver iqp(meshProps(), scaling, varLowerBound, maxSecondsIQP, INDIVIDUAL_ARC_FACTOR);
+    impl::BonminIQPSolver iqp(meshProps(), varLowerBound, maxSecondsIQP);
 #endif
     iqp.setupDefaultOptions();
     iqp.setupVariables();
-    iqp.setupObjective();
+    iqp.setupObjective(_obj);
     iqp.setupConstraints();
     iqp.finalizeSetup();
 
     int iter = 0;
-    double obj = 0.0;
     // Iteratively enforce violated separation constraints
     bool validSolution = false;
 
@@ -106,12 +70,13 @@ IQPQuantizer::RetCode IQPQuantizer::quantize(double scaling, double varLowerBoun
     if (varLowerBound <= 0.0)
     {
         // If separation nontrivial and not predetermined, dont waste too much time on first few solves
-        if (_sep.previousSeparationViolatingPaths().empty())
+        if (_sep.previousStructuralConstraints().empty())
             nextSolveExact = false;
         else
-            iqp.addConstraints(_sep.previousSeparationViolatingPaths());
+            iqp.addConstraints(_sep.previousStructuralConstraints());
     }
 
+    bool uncheckedChanges = true;
     while (!validSolution || nextSolveExact)
     {
         iter++;
@@ -123,13 +88,18 @@ IQPQuantizer::RetCode IQPQuantizer::quantize(double scaling, double varLowerBoun
 
         if (ret != BaseIQPSolver::SUCCESS)
         {
-            LOG(WARNING) << "IQP solver could not find a valid solution in given time, reverting to previous solution (if existing)";
-            for (auto& kv: previousSolution)
+            LOG(WARNING) << "IQP solver could not find a valid solution in given time, reverting to previous solution "
+                            "(if existing)";
+            for (auto& kv : previousValidSolution)
                 mcMeshProps().set<ARC_INT_LENGTH>(kv.first, kv.second);
             return SOLVER_ERROR;
         }
 
-        obj = iqp.objectiveValue();
+        for (auto& kv : previousSolution)
+            if (mcMeshProps().get<ARC_INT_LENGTH>(kv.first) != kv.second)
+                uncheckedChanges = true;
+        for (EH a : mcMeshProps().mesh().edges())
+            previousSolution[a] = mcMeshProps().get<ARC_INT_LENGTH>(a);
 
         int minArcLength = 10000;
         for (EH a : mc.edges())
@@ -144,8 +114,11 @@ IQPQuantizer::RetCode IQPQuantizer::quantize(double scaling, double varLowerBoun
         else
         {
             vector<vector<pair<int, EH>>> forcedNonZeroSum;
-            _sep.findSeparationViolatingPaths(
-                criticalLinks, isCriticalArc, isCriticalNode, isCriticalPatch, forcedNonZeroSum);
+            if (uncheckedChanges)
+            {
+                _sep.violatedStructuralConstraints(forcedNonZeroSum);
+                uncheckedChanges = false;
+            }
             validSolution = forcedNonZeroSum.size() == 0;
 
             if (!validSolution)
@@ -156,20 +129,13 @@ IQPQuantizer::RetCode IQPQuantizer::quantize(double scaling, double varLowerBoun
             }
             else
             {
-                for (EH a: mcMeshProps().mesh().edges())
-                    previousSolution[a] = mcMeshProps().get<ARC_INT_LENGTH>(a);
+                previousValidSolution = previousSolution;
                 nextSolveExact = !nextSolveExact;
+                if (nextSolveExact)
+                    iqp.useCurrentAsWarmStart();
             }
         }
     }
-
-    int minArcLength = 10000;
-    for (EH a : mc.edges())
-        minArcLength = std::min(minArcLength, mcMeshProps().get<ARC_INT_LENGTH>(a));
-    int nHexes = _sep.numHexesInQuantization();
-
-    LOG(INFO) << "Quantized MC, nHexes: " << nHexes << ", iterations: " << iter
-                << ", minArcLength: " << minArcLength << ", objective value: " << obj << std::endl;
 
     return SUCCESS;
 }

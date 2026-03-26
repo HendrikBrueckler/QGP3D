@@ -78,7 +78,7 @@ class Quantizer
      * @param maxSecondsIQP IN: optional time limit for IQP solvers. 0 disables IQP solvers and uses greedy solve only.
      * @return RetCode SUCCESS or error code
      */
-    RetCode quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes, int maxSecondsIQP = 300);
+    RetCode quantize(double scaleFactor, vector<PathConstraint>& constraints, int& nHexes, int maxSecondsIQP = 300, double individualArcFactor = 1.0);
 
   private:
     const TetMesh& _tetMesh; // ref to input mesh

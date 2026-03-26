@@ -7,8 +7,13 @@ namespace qgp3d
 namespace impl
 {
 
-GurobiLPSolver::GurobiLPSolver(const TetMeshProps& meshProps, double scaling, const ISPQuantizer::Decomposition& decomp)
-    : TetMeshNavigator(meshProps), MCMeshNavigator(meshProps), BaseLPSolver(meshProps, scaling, decomp), _lpenv(true)
+GurobiLPSolver::GurobiLPSolver(const TetMeshProps& meshProps,
+                               const ISPQuantizer::Decomposition& decomp,
+                               const Eigen::VectorXd& currentGrad,
+                               const Eigen::SparseMatrix<double>& currentHess,
+                               const Eigen::VectorXd& currentContinuousQuadraticOpt)
+    : TetMeshNavigator(meshProps), MCMeshNavigator(meshProps),
+      BaseLPSolver(meshProps, decomp, currentGrad, currentHess, currentContinuousQuadraticOpt), _lpenv(true)
 {
     _lpenv.set(GRB_IntParam_LogToConsole, false);
     _lpenv.set(GRB_IntParam_Threads, 1);
@@ -57,7 +62,8 @@ void GurobiLPSolver::setupLPBase()
                 for (HEH ha : side2has.at(side))
                 // if (asVisited.count(mcMesh.edge_handle(ha)) != 0)
                 {
-                    auto& varPair = _subproblem2bundle2vars[subproblem].at(_decomp.arc2bundle.at(mcMesh.edge_handle(ha)));
+                    auto& varPair
+                        = _subproblem2bundle2vars[subproblem].at(_decomp.arc2bundle.at(mcMesh.edge_handle(ha)));
                     sum += (side == dir ? 1 : -1) * (varPair.first - varPair.second);
                 }
 
@@ -79,7 +85,7 @@ void GurobiLPSolver::setupDynamicObjective(int subproblem)
         auto& varPair = _subproblem2bundle2vars[subproblem].at(bundle);
         double weightAdd = weight(bundle, true);
         double weightSub = weight(bundle, false);
-        objective += _decomp.bundle2arcs[bundle].size() * (weightAdd * varPair.first + weightSub * varPair.second);
+        objective += (weightAdd * varPair.first + weightSub * varPair.second);
     }
     model.setObjective(objective, GRB_MINIMIZE);
 }

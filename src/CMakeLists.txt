@@ -11,13 +11,13 @@ list(APPEND QGP3D_LIB_LIST MC3D::MC3D)
 
 #gurobi
 
-option(MC3D_USE_GUROBI ON "Use Gurobi as solver if available.")
+option(QGP3D_USE_GUROBI ON "Use Gurobi as solver if available.")
 
-if (MC3D_USE_GUROBI)
+if (QGP3D_USE_GUROBI)
     find_package(Gurobi)
 endif()
 
-if (Gurobi_FOUND AND MC3D_USE_GUROBI)
+if (Gurobi_FOUND AND QGP3D_USE_GUROBI)
   list(APPEND QGP3D_COMPILE_DEFINITIONS_PUB "QGP3D_WITH_GUROBI")
   list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiC)
   list(APPEND QGP3D_LIB_LIST_PRV Gurobi::GurobiCXX)
@@ -51,9 +51,10 @@ list(APPEND QGP3D_SOURCE_LIST
      "ISP/GurobiLPSolver.cpp"
      "ISP/ClpLPSolver.cpp"
      "ISP/ISPQuantizer.cpp"
-     "SeparationChecker.cpp"
+     "StructurePreserver.cpp"
      "ConstraintExtractor.cpp"
      "ConstraintWriter.cpp"
+     "ObjectiveBuilder.cpp"
      "Quantizer.cpp")
 list(APPEND QGP3D_HEADER_LIST
      "../include/QGP3D/PathConstraint.hpp"
@@ -65,9 +66,10 @@ list(APPEND QGP3D_HEADER_LIST
      "../include/QGP3D/ISP/GurobiLPSolver.hpp"
      "../include/QGP3D/ISP/ClpLPSolver.hpp"
      "../include/QGP3D/ISP/BaseLPSolver.hpp"
-     "../include/QGP3D/SeparationChecker.hpp"
+     "../include/QGP3D/StructurePreserver.hpp"
      "../include/QGP3D/ConstraintExtractor.hpp"
      "../include/QGP3D/ConstraintWriter.hpp"
+     "../include/QGP3D/ObjectiveBuilder.hpp"
      "../include/QGP3D/Quantizer.hpp")
 
 ### Create target

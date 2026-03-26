@@ -5,7 +5,8 @@
 
 #include <MC3D/Mesh/MCMeshManipulator.hpp>
 
-#include "QGP3D/SeparationChecker.hpp"
+#include "QGP3D/ObjectiveFunction.hpp"
+#include "QGP3D/StructurePreserver.hpp"
 
 namespace qgp3d
 {
@@ -29,7 +30,7 @@ class IQPQuantizer : public virtual MCMeshManipulator
      * @param meshProps IN: mesh whose MC to quantize
      * @param sep IN: separationchecker to use for lazy separation. May come with predetermined separation constraints
      */
-    IQPQuantizer(TetMeshProps& meshProps, SeparationChecker& sep);
+    IQPQuantizer(TetMeshProps& meshProps, StructurePreserver& sep, QuadraticObjective& obj);
 
     /**
      * @brief Compute quantization
@@ -39,10 +40,11 @@ class IQPQuantizer : public virtual MCMeshManipulator
      * @param maxSeconds IN: time limit in seconds
      * @return RetCode SUCCESS or error code
      */
-    RetCode quantize(double scaling = 1.0, double varLowerBound = 0.0, int maxSeconds = 300.0);
+    RetCode quantize(double varLowerBound = 0.0, int maxSeconds = 300.0);
 
   protected:
-    SeparationChecker& _sep; // Separation checker given from outside
+    StructurePreserver& _sep;  // Separation checker managed externally
+    QuadraticObjective& _obj; // The objective function to minimize managed externally
 };
 
 } // namespace qgp3d

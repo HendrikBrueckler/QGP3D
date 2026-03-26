@@ -13,6 +13,7 @@
 #include <QGP3D/ConstraintWriter.hpp>
 #include <QGP3D/IQP/IQPQuantizer.hpp>
 #include <QGP3D/ISP/ISPQuantizer.hpp>
+#include <QGP3D/ObjectiveBuilder.hpp>
 
 #include <QGP3D/Quantizer.hpp>
 
@@ -47,7 +48,10 @@ int main(int argc, char** argv)
     bool exactOutput = false;
     bool forceSanitization = false;
 
-    double scaling = 0.0;
+    int variant = 0; // IN CURRENT MEASUREMENT: modulo 2: pick SINGULARITIES_FIXED, /2 modulo 2: pick objective, /4
+                     // modulo 2 pick singularity padding
+    double nTargetHexes = 10000;
+    double individualArcFactor = 0.01;
     std::string constraintFile = "";
 
     app.add_option("--input", inputFile, "Specify the input mesh & seamless parametrization file.")->required();
@@ -76,7 +80,10 @@ int main(int argc, char** argv)
     app.add_option("--output-constraint-file",
                    constraintFile,
                    "Set this string to generate a quantization constraint file (optional)");
-    app.add_option("--scaling", scaling, "Set scaling factor for quantization");
+    app.add_option("--num-hexes", nTargetHexes, "Target number of hexes");
+    app.add_option("--variant", variant, "Choose algortihm variant (MUlTI-USE, JUST FOR EXPERIMENTS)");
+    app.add_option(
+        "--arc-factor", individualArcFactor, "Percent weight of individual arc lengths (vs critical path lengths)");
 #ifndef QGP3D_WITHOUT_IQP
     int iqpTimeLimit = 180;
     app.add_option("--iqp-time-limit",
@@ -98,12 +105,23 @@ int main(int argc, char** argv)
     TetMesh meshRaw;
     MCMesh mcMeshRaw;
     TetMeshProps meshProps(meshRaw, mcMeshRaw);
+    meshProps.allocate<ALGO_VARIANT>(variant);
+    LOG(INFO) << "Running algorithm variant " << meshProps.get<ALGO_VARIANT>();
 
     Reader reader(meshProps, inputFile, forceSanitization);
     if (inputHasMCwalls)
         ASSERT_SUCCESS("Reading precomputed MC walls", reader.readSeamlessParamWithWalls());
     else
         ASSERT_SUCCESS("Reading seamless map", reader.readSeamlessParam());
+
+    double scaling = 0.0;
+    LOG(INFO) << "Trying to make " << nTargetHexes << " hexes";
+    // Compute parametric volume
+    double paramVol = 0.0;
+    for (CH c : meshRaw.cells())
+        paramVol += reader.doubleVolumeUVW(c);
+    scaling = std::cbrt(nTargetHexes / paramVol);
+    LOG(INFO) << "Parametrization scaling factor " << scaling;
 
     MCGenerator mcgen(meshProps);
     if (!inputHasMCwalls)
@@ -193,11 +211,15 @@ int main(int argc, char** argv)
 
     if (!constraintFile.empty())
     {
-        SeparationChecker sep(meshProps);
-        ASSERT_SUCCESS("Quantization (Greedy)", ISPQuantizer(meshProps, sep).quantize(scaling, -DBL_MAX));
+        QuadraticObjective obj = ((variant / 2) % 2)
+                                     ? ObjectiveBuilder(meshProps).arcLengthDeviationObjective(scaling)
+                                     : ObjectiveBuilder(meshProps).simplifiedDistortionObjective(scaling, individualArcFactor);
+        StructurePreserver sep(meshProps);
+        ASSERT_SUCCESS("Quantization (Greedy)", ISPQuantizer(meshProps, sep, obj).quantize(-DBL_MAX));
 #ifndef QGP3D_WITHOUT_IQP
         if (iqpTimeLimit > 0)
-            ASSERT_SUCCESS("Quantization (Exact)", IQPQuantizer(meshProps, sep).quantize(scaling, -DBL_MAX, iqpTimeLimit));
+            ASSERT_SUCCESS("Quantization (Exact)",
+                           IQPQuantizer(meshProps, sep, obj).quantize(-DBL_MAX, iqpTimeLimit));
 #endif
         ASSERT_SUCCESS("Writing constraints", ConstraintWriter(meshProps, constraintFile).writeTetPathConstraints());
     }

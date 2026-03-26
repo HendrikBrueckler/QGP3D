@@ -7,8 +7,13 @@ namespace qgp3d
 namespace impl
 {
 
-ClpLPSolver::ClpLPSolver(const TetMeshProps& meshProps, double scaling, const ISPQuantizer::Decomposition& decomp)
-    : TetMeshNavigator(meshProps), MCMeshNavigator(meshProps), BaseLPSolver(meshProps, scaling, decomp)
+ClpLPSolver::ClpLPSolver(const TetMeshProps& meshProps,
+                         const ISPQuantizer::Decomposition& decomp,
+                         const Eigen::VectorXd& currentGrad,
+                         const Eigen::SparseMatrix<double>& currentHess,
+                         const Eigen::VectorXd& currentContinuousQuadraticOpt)
+    : TetMeshNavigator(meshProps), MCMeshNavigator(meshProps),
+      BaseLPSolver(meshProps, decomp, currentGrad, currentHess, currentContinuousQuadraticOpt)
 {
 }
 
@@ -62,7 +67,8 @@ void ClpLPSolver::setupLPBase()
                 for (HEH ha : side2has.at(side))
                 // if (asVisited.count(mcMesh.edge_handle(ha)) != 0)
                 {
-                    auto& varPair = _subproblem2bundle2vars[subproblem].at(_decomp.arc2bundle.at(mcMesh.edge_handle(ha)));
+                    auto& varPair
+                        = _subproblem2bundle2vars[subproblem].at(_decomp.arc2bundle.at(mcMesh.edge_handle(ha)));
                     vars.push_back(varPair.first);
                     coeffs.push_back(side == dir ? 1.0 : -1.0);
                     vars.push_back(varPair.second);
@@ -84,8 +90,8 @@ void ClpLPSolver::setupDynamicObjective(int subproblem)
         auto& varPair = _subproblem2bundle2vars[subproblem].at(bundle);
         double weightAdd = weight(bundle, true);
         double weightSub = weight(bundle, false);
-        model.setObjectiveCoefficient(varPair.first, weightAdd * _decomp.bundle2arcs[bundle].size());
-        model.setObjectiveCoefficient(varPair.second, weightSub * _decomp.bundle2arcs[bundle].size());
+        model.setObjectiveCoefficient(varPair.first, weightAdd);
+        model.setObjectiveCoefficient(varPair.second, weightSub);
     }
 }
 

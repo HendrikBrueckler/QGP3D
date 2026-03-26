@@ -31,7 +31,11 @@ class ClpLPSolver : public BaseLPSolver
      * @param scaling IN: scaling factor for target lengths
      * @param decomp IN: decomposition into subproblems
      */
-    ClpLPSolver(const TetMeshProps& meshProps, double scaling, const ISPQuantizer::Decomposition& decomp);
+    ClpLPSolver(const TetMeshProps& meshProps,
+                const ISPQuantizer::Decomposition& decomp,
+                const Eigen::VectorXd& currentGrad,
+                const Eigen::SparseMatrix<double>& currentHess,
+                const Eigen::VectorXd& currentContinuousQuadraticOpt);
 
     /// @brief See \ref BaseIQPSolver for usage
 

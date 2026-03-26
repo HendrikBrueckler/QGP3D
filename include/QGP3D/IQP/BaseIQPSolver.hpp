@@ -3,6 +3,7 @@
 #ifndef QGP3D_BASEIQPSOLVER_HPP
 #define QGP3D_BASEIQPSOLVER_HPP
 
+#include "QGP3D/ObjectiveFunction.hpp"
 #include <MC3D/Types.hpp>
 
 namespace qgp3d
@@ -29,12 +30,8 @@ class BaseIQPSolver
      * @param maxSeconds IN: time limit for solver in seconds
      * @param individualArcFactor IN: objective = this * <arc-length-deviation> + (1-this) * <block-length-deviation>
      */
-    BaseIQPSolver(double scaling = 1.0,
-                  double varLowerBound = 0.0,
-                  double maxSeconds = 300,
-                  double individualArcFactor = 1.0)
-        : _scaling(scaling), _varLowerBound(varLowerBound), _maxSeconds(maxSeconds),
-          _individualArcFactor(individualArcFactor)
+    BaseIQPSolver(double varLowerBound = 0.0, double maxSeconds = 300)
+        : _varLowerBound(varLowerBound), _maxSeconds(maxSeconds)
     {
     }
 
@@ -53,7 +50,7 @@ class BaseIQPSolver
     /**
      * @brief Configure objective function
      */
-    virtual void setupObjective() = 0;
+    virtual void setupObjective(QuadraticObjective& obj) = 0;
 
     /**
      * @brief Configure constraints
@@ -96,15 +93,13 @@ class BaseIQPSolver
 
     /**
      * @brief Add additional constraints (after setup was finalized)
-     * @param nonZeroSum IN: constraints as encoded in \ref SeparationChecker
+     * @param nonZeroSum IN: constraints as encoded in \ref StructurePreserver
      */
     virtual void addConstraints(const vector<vector<pair<int, EH>>>& nonZeroSum) = 0;
 
   protected:
-    double _scaling;             // scale target lengths by this factor for quantization
-    double _varLowerBound;       // lower bound for arc lengths
-    double _maxSeconds;          // time limit for solver in seconds
-    double _individualArcFactor; // objective = this * <arc-length-deviation> + (1-this) * <block-length-deviation>
+    double _varLowerBound; // lower bound for arc lengths
+    double _maxSeconds;    // time limit for solver in seconds
 };
 
 } // namespace qgp3d
