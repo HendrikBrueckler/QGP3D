@@ -67,7 +67,7 @@ In root directory
 An example command-line application is included that reads a tetrahedral mesh including a seamless parametrization from a file in .hexex-format, as used and documented in [libHexEx](https://www.graphics.rwth-aachen.de/software/libHexEx/).
 It outputs the integer spacing constraints between critical vertices of the input mesh.
 
-After building the CLI app can be found in ```build/Build/bin/cli```.
+After building the CLI app can be found in ```build/Build/bin/```.
 For full information on its usage, execute
 
     qgp3d_cli --help
