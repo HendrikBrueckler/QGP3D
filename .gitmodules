@@ -1,3 +1,6 @@
 [submodule "extern/MC3D"]
 	path = extern/MC3D
 	url = https://github.com/HendrikBrueckler/MC3D.git
+[submodule "cmake-library"]
+	path = cmake-library
+	url = https://github.com/cgg-bern/cmake-library
