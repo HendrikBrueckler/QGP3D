@@ -119,9 +119,7 @@ target_link_libraries_system(QGP3D PRIVATE ${QGP3D_LIB_LIST_PRV})
 set_target_properties(QGP3D PROPERTIES
                       DEBUG_POSTFIX "d"
                       VERSION ${${PROJECT_NAME}_VERSION_MAJOR}.${${PROJECT_NAME}_VERSION_MINOR}
-                      SOVERSION ${${PROJECT_NAME}_VERSION_MAJOR}.${${PROJECT_NAME}_VERSION_MINOR}
-                      CXX_STANDARD 17
-                      CXX_STANDARD_REQUIRED ON)
+                      SOVERSION ${${PROJECT_NAME}_VERSION_MAJOR}.${${PROJECT_NAME}_VERSION_MINOR})
 # compile options
 list(APPEND QGP3D_COMPILE_OPTIONS_PRV "-Wall" "-Wextra" "-Wshadow" "-Wunused" "-Wunused-function")
 target_compile_options(QGP3D PRIVATE ${QGP3D_COMPILE_OPTIONS_PRV})
