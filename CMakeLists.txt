@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.10)
 project(QGP3D VERSION 1.0)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake-library/finders)
+
 include(macrOS)
 include(GNUInstallDirs)
 
