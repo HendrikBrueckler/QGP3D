@@ -27,17 +27,6 @@ endif()
 if(${CMAKE_PROJECT_NAME} STREQUAL ${PROJECT_NAME})
     set(QGP3D_STANDALONE TRUE)
     message("Configuring QGP3D as standalone project...")
-### Global cmake settings
-    set(CMAKE_CXX_STANDARD 17)
-    set(CXX_STANDARD_REQUIRED ON)
-    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-    set(CMAKE_C_EXTENSIONS OFF)
-    set(CMAKE_CXX_EXTENSIONS OFF)
-    if (QGP3D_STANDALONE)
-        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Build/lib/)
-        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Build/lib/)
-        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Build/bin/)
-    endif()
 else()
     set(QGP3D_STANDALONE FALSE)
     message("Configuring QGP3D inside another cmake project...")
@@ -49,11 +38,21 @@ option(QGP3D_BUILD_CLI         "Build CLI app for QGP3D"  ${QGP3D_STANDALONE})
 option(QGP3D_SUBMODULES_MANUAL "Skip automatic submodule download" OFF)
 option(BUILD_SHARED_LIBS       "Build libraries as shared as opposed to static" ON)
 
-
-set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON) # TODO: Only set this on QGP3D target
+if (QGP3D_STANDALONE)
+    ### Global cmake settings
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON) # TODO: Only set this on QGP3D target
+    set(CMAKE_CXX_STANDARD 17)
+    set(CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    set(CMAKE_C_EXTENSIONS OFF)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Build/lib/)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Build/lib/)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/Build/bin/)
+endif()
 
 ### Load external libs
-if(NOT ${QGP3D_SUBMODULES_MANUAL})
+if(NOT QGP3D_SUBMODULES_MANUAL)
     add_subdirectory(extern)
 endif()
 

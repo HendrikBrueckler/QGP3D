@@ -7,7 +7,7 @@ else()
 endif()
 
 if(NOT EXISTS "${PROJECT_SOURCE_DIR}/extern/MC3D/CMakeLists.txt")
-    if (${QGP3D_STANDALONE})
+    if (QGP3D_STANDALONE)
         message(FATAL_ERROR "The submodules were not downloaded! Please update submodules and try again.")
     else()
         message(WARNING "QGP3D submodules not downloaded! Must supply them in a base project.")
