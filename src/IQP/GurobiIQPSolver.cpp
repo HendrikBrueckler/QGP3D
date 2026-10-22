@@ -10,7 +10,7 @@ namespace impl
 {
 
 GurobiIQPSolver::GurobiIQPSolver(
-TetMeshProps& meshProps, double scaling, double varLowerBound, double maxSeconds)
+TetMeshProps& meshProps, double varLowerBound, double maxSeconds)
 try
     : TetMeshNavigator(meshProps), TetMeshManipulator(meshProps), MCMeshNavigator(meshProps),
         MCMeshManipulator(meshProps), BaseIQPSolver(varLowerBound, maxSeconds), _env(true),

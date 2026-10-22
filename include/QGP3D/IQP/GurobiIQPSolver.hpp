@@ -24,10 +24,8 @@ class GurobiIQPSolver : public BaseIQPSolver, public virtual MCMeshManipulator
      * @brief Create new IQP solver instance based on Bonmin
      *
      * @param meshProps IN: mesh whose MC to quantize
-     * @param scaling IN: scale target lengths by this factor for quantization
      * @param varLowerBound IN: lower bound for arc lengths
      * @param maxSeconds IN: time limit for solver in seconds
-     * @param individualArcFactor IN: objective = this * <arc-length-deviation> + (1-this) * <block-length-deviation>
      */
     GurobiIQPSolver(TetMeshProps& meshProps, double varLowerBound, double maxSeconds = 180);
 
