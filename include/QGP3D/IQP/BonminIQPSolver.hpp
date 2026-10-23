@@ -79,7 +79,6 @@ class BonminIQPSolver : public BaseIQPSolver, public virtual MCMeshManipulator
     class BonminIQP : public Bonmin::TMINLP, public virtual MCMeshNavigator
     {
       public:
-        double _scaling;
         double _varLowerBound;
 
         map<EH, int> _arc2idx;
@@ -89,7 +88,7 @@ class BonminIQPSolver : public BaseIQPSolver, public virtual MCMeshManipulator
         Eigen::SparseMatrix<double> _hessianSparse;
         vector<Constraint> _constraints;
 
-        BonminIQP(const TetMeshProps& meshProps, double scaling, double varLowerBound);
+        BonminIQP(const TetMeshProps& meshProps, double varLowerBound);
 
         /// virtual destructor.
         virtual ~BonminIQP()

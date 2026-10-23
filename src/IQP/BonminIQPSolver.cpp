@@ -78,7 +78,7 @@ void BonminIQPSolver::setupObjective(QuadraticObjective& obj)
 
     _instance->_objectiveBase = obj.f0;
     _instance->_objectiveLin = obj.grad0;
-    _instance->_hessianSparse = obj.hessian;
+    _instance->_hessianSparse = obj.hess;
 }
 
 void BonminIQPSolver::setupConstraints()
