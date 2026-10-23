@@ -449,7 +449,7 @@ double ISPQuantizer::greedyDescent(BaseLPSolver& sheetFinder, bool useGlobalProb
             DLOG(INFO) << "Bi-Bundle Sheeting";
             // Assume inflating i, deflating j
             auto getBiPriority
-                = [&, this](int i, int j) { return sheetFinder.optimalDoubleFactor({{i, 1}, {j, -1}}); };
+                = [&](int i, int j) { return sheetFinder.optimalDoubleFactor({{i, 1}, {j, -1}}); };
 
             vector<map<pairTT<int>, map<int, double>>> w2biBundle2sheet(2);
             map<pairTT<int>, int> biBundle2lastState;

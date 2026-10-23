@@ -51,7 +51,7 @@ class QuadraticObjective : public ObjectiveFunction
         hess_ = hess;
     }
 
-    inline bool is_hessian_const()
+    inline bool is_hessian_const() override
     {
         return true;
     }
