@@ -540,7 +540,7 @@ ObjectiveBuilder::getInterfaceTraversingPathsMC(const map<VH, HEH>& n2precursors
     paths.clear();
     pathWeights.clear();
 
-    auto computeBlockCenter = [&mcMesh, this](const CH& b) -> Vec3d
+    auto computeBlockCenter = [this](const CH& b) -> Vec3d
     {
         VH n1 = mcMeshProps().get<BLOCK_CORNER_NODES>(b).at(UVWDir::NEG_U | UVWDir::NEG_V | UVWDir::NEG_W);
         VH n2 = mcMeshProps().get<BLOCK_CORNER_NODES>(b).at(UVWDir::POS_U | UVWDir::POS_V | UVWDir::POS_W);
@@ -665,7 +665,7 @@ ObjectiveBuilder::getInterfaceTraversingPathsMC(const map<VH, HEH>& n2precursors
     return SUCCESS;
 }
 
-void ObjectiveBuilder::debugViewVoronoiCells(const set<VH>& seeds, const map<VH, HEH>& n2precursors) const
+void ObjectiveBuilder::debugViewVoronoiCells([[maybe_unused]] const set<VH>& seeds, [[maybe_unused]] const map<VH, HEH>& n2precursors) const
 {
 #ifdef MC3D_WITH_VIEWER
     auto& mcMesh = mcMeshProps().mesh();
@@ -722,8 +722,8 @@ void ObjectiveBuilder::debugViewVoronoiCells(const set<VH>& seeds, const map<VH,
 #endif
 }
 
-void ObjectiveBuilder::debugViewPaths(const map<pairTT<VH>, vector<set<EH>>>& seedPairs2interfaces,
-                                      const vector<vector<HEH>>& paths) const
+void ObjectiveBuilder::debugViewPaths([[maybe_unused]] const map<pairTT<VH>, vector<set<EH>>>& seedPairs2interfaces,
+                                      [[maybe_unused]] const vector<vector<HEH>>& paths) const
 {
 #ifdef MC3D_WITH_VIEWER
     auto& mcMesh = mcMeshProps().mesh();

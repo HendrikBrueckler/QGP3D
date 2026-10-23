@@ -357,7 +357,7 @@ StructurePreserver::violatedStructuralConstraints(vector<vector<pair<int, EH>>>&
                             }
                         else if (crit2.dim == 2
                                  && !containsMatching(crit2.regionPs,
-                                                      [&, this](const FH& p)
+                                                      [&](const FH& p)
                                                       { return contains(mcMesh.face_vertices(p), c0.n); }))
                             for (FH p : crit2.regionPs)
                             {
@@ -386,7 +386,7 @@ StructurePreserver::violatedStructuralConstraints(vector<vector<pair<int, EH>>>&
                             }
                         else if (crit2.dim == 2
                                  && containsMatching(crit2.regionPs,
-                                                     [&, this](const FH& p)
+                                                     [&](const FH& p)
                                                      { return contains(mcMesh.face_vertices(p), c0.n); }))
                             for (FH p : crit2.regionPs)
                             {
@@ -442,7 +442,7 @@ StructurePreserver::violatedStructuralConstraints(vector<vector<pair<int, EH>>>&
                             }
                         else if (crit2.dim == 2
                                  && !containsMatching(crit2.regionPs,
-                                                      [&, this](const FH& p)
+                                                      [&](const FH& p)
                                                       {
                                                           return containsSomeOf(
                                                               mcMesh.face_vertices(p),
@@ -476,7 +476,7 @@ StructurePreserver::violatedStructuralConstraints(vector<vector<pair<int, EH>>>&
                             }
                         else if (crit2.dim == 2
                                  && containsMatching(crit2.regionPs,
-                                                     [&, this](const FH& p)
+                                                     [&](const FH& p)
                                                      {
                                                          return containsSomeOf(
                                                              mcMesh.face_vertices(p),
@@ -603,7 +603,7 @@ StructurePreserver::violatedStructuralConstraints(vector<vector<pair<int, EH>>>&
                             }
                         else if (crit2.dim == 2
                                  && !containsMatching(crit2.regionPs,
-                                                      [&, this](const FH& p)
+                                                      [&](const FH& p)
                                                       { return containsSomeOf(mcMesh.face_vertices(p), nsRegion); }))
                             for (FH p : crit2.regionPs)
                             {
@@ -643,7 +643,7 @@ StructurePreserver::violatedStructuralConstraints(vector<vector<pair<int, EH>>>&
                             }
                         else if (crit2.dim == 2
                                  && containsMatching(crit2.regionPs,
-                                                     [&, this](const FH& p)
+                                                     [&](const FH& p)
                                                      { return containsSomeOf(mcMesh.face_vertices(p), nsRegion); }))
                             for (FH p : crit2.regionPs)
                             {
@@ -1291,14 +1291,14 @@ void StructurePreserver::traceUnproblematicPaths(const IntegerGridGraphNode& c0,
                         {
                             if (cOut.n != pIn.c.n
                                 && !containsMatching(mcMesh.outgoing_halfedges(pIn.c.n),
-                                                     [&, this](const HEH& ha)
+                                                     [&](const HEH& ha)
                                                      {
                                                          return mcMesh.to_vertex_handle(ha) == cOut.n
                                                                 && potentiallyUnproblematicNodes.count(
                                                                     mcMesh.edge_handle(ha));
                                                      })
                                 && !containsMatching(mcMesh.vertex_faces(pIn.c.n),
-                                                     [&, this](const FH& p)
+                                                     [&](const FH& p)
                                                      {
                                                          return potentiallyUnproblematicNodes.count(p)
                                                                 && contains(mcMesh.face_vertices(p), cOut.n);
@@ -1308,7 +1308,7 @@ void StructurePreserver::traceUnproblematicPaths(const IntegerGridGraphNode& c0,
                         else if (pIn.c.a.is_valid())
                         {
                             if (!containsMatching(mcMesh.edge_faces(pIn.c.a),
-                                                  [&, this](const FH& p)
+                                                  [&](const FH& p)
                                                   {
                                                       return potentiallyUnproblematicNodes.count(p)
                                                              && contains(mcMesh.face_vertices(p), cOut.n);
@@ -1326,7 +1326,7 @@ void StructurePreserver::traceUnproblematicPaths(const IntegerGridGraphNode& c0,
                         if (pIn.c.n.is_valid())
                         {
                             if (!containsMatching(mcMesh.vertex_faces(pIn.c.n),
-                                                  [&, this](const FH& p)
+                                                  [&](const FH& p)
                                                   {
                                                       return potentiallyUnproblematicNodes.count(p)
                                                              && contains(mcMesh.face_edges(p), cOut.a);
@@ -1336,7 +1336,7 @@ void StructurePreserver::traceUnproblematicPaths(const IntegerGridGraphNode& c0,
                         else if (pIn.c.a.is_valid() && pIn.c.a != cOut.a)
                         {
                             if (!containsMatching(mcMesh.edge_faces(pIn.c.a),
-                                                  [&, this](const FH& p)
+                                                  [&](const FH& p)
                                                   {
                                                       return potentiallyUnproblematicNodes.count(p)
                                                              && contains(mcMesh.face_edges(p), cOut.a);
@@ -2157,7 +2157,6 @@ bool StructurePreserver::traceSingularityIndexPaths(const IntegerGridGraphNode& 
             backAs.insert(a2);
             for (bool front : {true, false})
             {
-                int idxSum = front ? idxSumFront : idxSumBack;
                 set<EH>& asVisited = front ? frontAs : backAs;
                 list<EH> aQ({*asVisited.begin()});
                 while (!aQ.empty())
@@ -2165,7 +2164,6 @@ bool StructurePreserver::traceSingularityIndexPaths(const IntegerGridGraphNode& 
                     EH a = aQ.front();
                     DLOG(INFO) << "Link " << a << " contributes " << mcMeshProps().get<IS_SINGULAR>(a) << " to "
                                << (front ? "front" : "back");
-                    idxSum += mcMeshProps().get<IS_SINGULAR>(a);
                     aQ.pop_front();
                     for (EH aNext : a2neighborAs.at(a))
                         if (!asVisited.count(aNext))
@@ -3121,7 +3119,7 @@ bool StructurePreserver::bboxOverlap(const Vec3i& min1, const Vec3i& max1, const
     return true;
 }
 
-void StructurePreserver::debugViewConstraintPath(const vector<pair<int, EH>>& constraintPath) const
+void StructurePreserver::debugViewConstraintPath([[maybe_unused]] const vector<pair<int, EH>>& constraintPath) const
 {
 #ifdef MC3D_WITH_VIEWER
     auto& mcMesh = mcMeshProps().mesh();

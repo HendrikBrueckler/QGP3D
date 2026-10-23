@@ -67,8 +67,6 @@ BaseLPSolver::integerSheet(int bundleToChange, bool add, bool fixing, bool useGl
 
     setupDynamicObjective(subproblem);
 
-    int nonZero = 0;
-
     {
         DLOG(INFO) << "Optimizing LP model";
         bool success = solve(subproblem);
@@ -96,7 +94,6 @@ BaseLPSolver::integerSheet(int bundleToChange, bool add, bool fixing, bool useGl
             if (std::abs(val) > 1e-6)
             {
                 sheet[bundle] = val;
-                nonZero++;
                 if (std::abs(std::round(val) - val) > 1e-6)
                 {
                     solved = false;
@@ -159,7 +156,6 @@ map<int, double> BaseLPSolver::integerSheet(int bundleI, int bundleJ, double dam
 
     setupDynamicObjective(subproblem);
 
-    int nonZero = 0;
 
     {
         DLOG(INFO) << "Optimizing LP model";
@@ -188,7 +184,6 @@ map<int, double> BaseLPSolver::integerSheet(int bundleI, int bundleJ, double dam
             if (std::abs(val) > 1e-6)
             {
                 sheet[bundle] = val;
-                nonZero++;
                 if (std::abs(std::round(val) - val) > 1e-6)
                 {
                     solved = false;
